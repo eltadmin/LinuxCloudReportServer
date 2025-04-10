@@ -2,6 +2,10 @@
 
 This is a Linux-compatible implementation of the Cloud Report Server, rewritten in Node.js for cross-platform compatibility.
 
+## Repository
+
+The source code is available on GitHub: https://github.com/eltadmin/LinuxCloudReportServer
+
 ## Features
 
 - HTTP Server for web requests
@@ -28,7 +32,7 @@ This is a Linux-compatible implementation of the Cloud Report Server, rewritten 
 
 1. Clone the repository:
    ```
-   git clone <repository-url>
+   git clone https://github.com/eltadmin/LinuxCloudReportServer.git
    cd LinuxCloudReportServer
    ```
 
@@ -57,7 +61,7 @@ This is a Linux-compatible implementation of the Cloud Report Server, rewritten 
 
 1. Clone the repository:
    ```
-   git clone <repository-url>
+   git clone https://github.com/eltadmin/LinuxCloudReportServer.git
    cd LinuxCloudReportServer
    ```
 
