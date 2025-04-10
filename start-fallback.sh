@@ -3,6 +3,17 @@
 echo "EBO Cloud Report Server Starter with Fallback"
 echo "============================================="
 
+# Check if dreport directory exists
+if [ ! -d "dreport" ]; then
+    echo "Warning: dreport directory not found. This directory is required for the web interface."
+    echo "The web interface may not work correctly without it."
+    read -p "Do you want to continue anyway? (y/n) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
+fi
+
 # Check if Docker is installed
 if command -v docker &> /dev/null && command -v docker-compose &> /dev/null; then
     echo "Docker is available, attempting to start with Docker..."
@@ -56,4 +67,6 @@ fi
 
 # Start manually
 echo "Starting in manual mode..."
+echo "Note: In manual mode, the web interface needs to be configured separately."
+echo "You will need to set up a web server to serve the dreport directory on port 8015."
 ./start-manual.sh 

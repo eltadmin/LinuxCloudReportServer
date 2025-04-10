@@ -57,7 +57,29 @@ services:
       retries: 3
       start_period: 30s
 
-# Web interface is running separately on port 8015
+  web-interface:
+    build:
+      context: .
+      dockerfile: Dockerfile.webinterface
+    container_name: ebo-web-interface
+    volumes:
+      - ./dreport:/var/www/html
+    ports:
+      - "8015:80"
+    restart: unless-stopped
+    networks:
+      - report-network
+    depends_on:
+      - report-server
+      - db
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+# Web interface is available on port 8015
 # URL: http://localhost:8015/dreport/
 
 networks:

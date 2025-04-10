@@ -18,8 +18,15 @@ if [ ! -f "dreports(8).sql" ]; then
     exit 1
 fi
 
+# Check if dreport directory exists
+if [ ! -d "dreport" ]; then
+    echo "Error: dreport directory not found. This directory is required for the web interface."
+    echo "Please make sure the dreport directory is in the same directory as this script."
+    exit 1
+fi
+
 echo "Starting EBO Cloud Report Server..."
-echo "This will start the database and server containers."
+echo "This will start the database, report server, and web interface containers."
 echo "The first startup may take several minutes while the database is being imported."
 
 # Start Docker containers
@@ -34,9 +41,10 @@ echo ""
 echo "Containers started successfully!"
 echo ""
 echo "Access points:"
-echo "- TCP server: tcp://localhost:8016"
-echo "- HTTP server: http://localhost:8080"
-echo "- MySQL database: mysql://localhost:3306/dreports"
+echo "- TCP server port: 8016"
+echo "- HTTP server port: 8080"
+echo "- Web interface: http://localhost:8015/dreport/"
+echo "- MySQL database port: 3306"
 echo ""
 echo "To stop the server, run: ./stop.sh"
 echo "To view server logs, run: docker-compose logs -f report-server" 

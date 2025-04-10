@@ -10,12 +10,14 @@ This is a Linux-compatible version of the EBO Cloud Report Server. It provides t
 - Docker support for easy deployment
 - Configurable settings through INI file
 - MySQL database integration
+- Web interface available on port 8015
 
 ## Requirements
 
 - Node.js 14+ or Docker
 - MySQL 8.0 database (included in Docker setup)
-- Access to the web interface (dreport)
+- PHP 8.0+ (for web interface)
+- Access to the dreport web interface directory
 
 ## Configuration
 
@@ -24,6 +26,38 @@ The configuration is stored in `eboCloudReportServer.ini` in the same format as 
 - `HTTP_Port`: HTTP server port (default: 8080)
 - `TCP_Port`: TCP server port (default: 8016)
 - `REST_URL`: URL to the REST API (default: http://10.150.40.8/dreport/api.php)
+
+## Directory Structure
+
+Before running the server, ensure you have the following directory structure:
+```
+LinuxCloudReportServer/
+├── docker-compose.yml
+├── Dockerfile
+├── Dockerfile.mysql
+├── Dockerfile.webinterface
+├── dreport/               # Web interface files
+├── dreports(8).sql        # MySQL database dump
+├── import-database.sh
+├── nginx.conf
+├── README.md
+├── src/                   # Server source code
+│   ├── constants.js
+│   ├── dbConnection.js
+│   ├── eboCloudReportServer.ini
+│   ├── package.json
+│   ├── remoteConnection.js
+│   ├── reportServer.js
+│   ├── restApiInterface.js
+│   └── server.js
+├── start-fallback.sh
+├── start-manual.sh
+├── start.sh
+├── stop.sh
+└── supervisord.conf
+```
+
+Make sure the `dreport` directory contains all the web interface files.
 
 ## Database Setup
 
@@ -59,7 +93,8 @@ The easiest way to start the server is to use the fallback script which will try
 
 1. Make sure Docker and Docker Compose are installed
 2. Make sure the `dreports(8).sql` file is in the root directory
-3. Build and start the containers:
+3. Make sure the `dreport` directory contains all the web interface files
+4. Build and start the containers:
    ```bash
    ./start.sh
    ```
@@ -82,6 +117,7 @@ If you don't want to use Docker or encounter issues with it:
    ```bash
    ./start-manual.sh
    ```
+4. You'll need to set up the web interface separately in this case
 
 ## Troubleshooting
 
@@ -116,24 +152,28 @@ If the server can't connect to the database, ensure the MySQL server is running 
    mysql -u dreports -pftUk58_HoRs3sAzz8jk dreports
    ```
 
-## Directory Structure
+### Web Interface Issues
 
-- `src/`: Source code for the server
-- `logs/`: Log files
-- `Updates/`: Update files for clients
-- `dreport/`: Web interface (existing)
+If the web interface isn't working:
+
+1. Verify that port 8015 is open and accessible
+2. Check that the dreport directory is properly mounted in the container
+3. Check the nginx logs for any errors:
+   ```bash
+   docker logs ebo-web-interface
+   ```
 
 ## Accessing the Server
 
 - TCP server: Port 8016 (configured in eboCloudReportServer.ini)
 - HTTP server: Port 8080 (configured in eboCloudReportServer.ini)
-- Web interface: http://localhost:8015/dreport/ (existing interface)
+- Web interface: http://localhost:8015/dreport/ (managed by nginx)
 - MySQL database: Port 3306
 
 ## Important Notes
 
 1. The server preserves all functionalities of the original Windows server
-2. The web interface is untouched and continues to work as before through http://localhost:8015/dreport/
+2. The web interface is now accessible through port 8015
 3. Configuration is compatible with the original INI format
 4. The REST API URL has been updated to 10.150.40.8 from 10.150.40.7
 5. All logs are stored in the `logs` directory
