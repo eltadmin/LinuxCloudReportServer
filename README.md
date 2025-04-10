@@ -160,8 +160,22 @@ If the web interface isn't working:
 2. Check that the dreport directory is properly mounted in the container
 3. Check the nginx logs for any errors:
    ```bash
-   docker logs ebo-web-interface
+   docker-compose logs -f web-interface
    ```
+
+If you see error "host not found in upstream" in the logs, use the provided update script:
+```bash
+chmod +x update-configs.sh
+./update-configs.sh
+```
+
+This will update the nginx configuration in the running container and reload nginx.
+
+If you need to completely rebuild the web interface container:
+```bash
+chmod +x restart-web.sh
+./restart-web.sh
+```
 
 ## Accessing the Server
 
