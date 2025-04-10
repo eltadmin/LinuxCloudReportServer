@@ -1,41 +1,17 @@
-FROM php:8.1-fpm
+# Use an official Python runtime as a parent image
+FROM python:3.11-slim-bookworm
 
-# Install dependencies
-RUN apt-get update && apt-get install -y \
-    nginx \
-    supervisor \
-    nodejs \
-    npm \
-    git \
-    curl \
-    zip \
-    unzip \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+# Set the working directory in the container
+WORKDIR /app
 
-# Install PHP extensions
-RUN docker-php-ext-install pdo pdo_mysql mysqli
+# Copy the configuration file and the server script into the container
+COPY config.ini server.py ./
 
-# Configure nginx
-COPY nginx.conf /etc/nginx/sites-enabled/default
+# Make port 8016 available to the world outside this container (from config.ini)
+EXPOSE 8016
 
-# Configure supervisord
-COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+# Define environment variable (optional, could be used for configuration)
+ENV NAME World
 
-# Set working directory
-WORKDIR /var/www/html
-
-# Create necessary directories
-RUN mkdir -p /var/log/supervisor /run/nginx /var/www/html/src
-
-# Copy Node.js application files
-COPY src/ /var/www/html/src/
-
-# Create required directories
-RUN mkdir -p /var/www/html/logs /var/www/html/Updates
-
-# Expose ports
-EXPOSE 80 8016 8080
-
-# Start supervisord
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"] 
+# Run server.py when the container launches
+CMD ["python", "./server.py"] 
