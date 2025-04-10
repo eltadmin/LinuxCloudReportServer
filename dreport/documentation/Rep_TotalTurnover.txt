@@ -1,0 +1,14 @@
+{
+  "Id":"DatabaseId",
+  "Pass":"1234",
+  "CurrentTurnover":
+  {
+    "Type":"Query",
+    "SQL":"select sum(S.SELL_SUM) \"SELL_SUM\", C.CURR_SIGN from SALES_BON S left join N_CURRENCY C on S.SELL_CURRTYPE = C.CURR_ID where (cast(S.SELL_DATETIME as date) = CURRENT_DATE)and(S.SELL_REVOKED_ = 0) group by C.CURR_SIGN"
+  }
+  "LastTurnover":
+  {
+    "Type":"Query",
+    "SQL":"select cast(S.SELL_DATETIME as date) \"SELL_DATE\", sum(S.SELL_SUM) \"SELL_SUM\", C.CURR_SIGN from SALES_BON S left join N_CURRENCY C on S.SELL_CURRTYPE = C.CURR_ID where (cast(S.SELL_DATETIME as date) >= (CURRENT_DATE - 7))and(S.SELL_REVOKED_ = 0) group by 1, 3"
+  }
+}	

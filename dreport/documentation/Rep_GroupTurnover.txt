@@ -1,0 +1,9 @@
+{
+  "Id":"DatabaseId",
+  "Pass":"1234",
+  "GroupTurnover":
+  {
+    "Type":"Query",
+    "SQL":"select G.O_GRP_NAME, sum(RoundTo((S.SPLU_SELLPRICE * S.SPLU_SOLDQUANT),2)+RoundTo((S.SPLU_SOLDQUANT * S.SPLU_SELLPRICE * S.SPLU_SELLDISCOUNT/100), 2)) as \"TURNOVER\", C.CURR_SIGN from SALES_PLUES S left join PLUES P on S.SPLU_PLUNUMB = PLUES.PLU_NUMB left join GET_TOPGROUPFORPLUGROUP(P.PLU_GROUP_ID, 2) G on G.O_GRP_ID > 0 left join N_CURRENCY C on S.SPLU_SELLCURRENCY = C.CURR_ID where cast(S.SPLU_DATETIME as date) = CURRENT_DATE group by 1, 3"
+  }
+}	

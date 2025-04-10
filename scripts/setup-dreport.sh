@@ -14,10 +14,10 @@ fi
 # Create necessary directories if they don't exist
 mkdir -p config/dreport logs updates
 
-# Check if dreport directory exists at the correct level
-if [ ! -d "../dreport" ]; then
-  echo "Error: dreport directory not found at the expected location (../dreport)"
-  echo "Please ensure the dreport directory is placed in the correct location"
+# Check if dreport directory exists in current directory
+if [ ! -d "./dreport" ]; then
+  echo "Error: dreport directory not found in the current directory (./dreport)"
+  echo "Please ensure the dreport directory is placed in the LinuxCloudReportServer directory"
   exit 1
 fi
 
@@ -43,7 +43,7 @@ fi
 # Start the containers in detached mode
 echo "Starting docker containers..."
 docker-compose down
-docker-compose up -d
+docker-compose up -d --build
 
 # Wait for services to start
 echo "Waiting for services to start (60 seconds)..."

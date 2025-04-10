@@ -30,14 +30,12 @@ services:
       - ./logs:/app/logs
       - ./updates:/app/updates
       - ./config:/app/config
-      - dreport-data:/var/www/html/dreport
+      - ./dreport:/var/www/html/dreport
     depends_on:
       mysql:
         condition: service_healthy
       database:
         condition: service_healthy
-      init-dreport:
-        condition: service_completed_successfully
     networks:
       - app-network
     healthcheck:
@@ -46,24 +44,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-
-  # Command to copy dreport files to container at startup
-  init-dreport:
-    image: alpine:latest
-    container_name: init-dreport
-    volumes:
-      - ../dreport:/dreport-source
-      - dreport-data:/dreport-dest
-    command: >
-      /bin/sh -c "
-        echo 'Copying dreport files...' &&
-        cp -r /dreport-source/* /dreport-dest/ &&
-        cp -r /dreport-source/.htaccess /dreport-dest/ 2>/dev/null || true &&
-        chmod -R 755 /dreport-dest &&
-        echo 'Files copied successfully!'
-      "
-    networks:
-      - app-network
 
   database:
     image: postgres:14-alpine
@@ -140,7 +120,6 @@ volumes:
   mysql-data:
   prometheus-data:
   grafana-data:
-  dreport-data:
 
 networks:
   app-network:

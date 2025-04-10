@@ -50,7 +50,8 @@ RUN mkdir -p logs updates /var/log/apache2
 
 # Setup Apache modules and configurations
 RUN sed -i 's/#LoadModule rewrite_module/LoadModule rewrite_module/' /etc/apache2/httpd.conf && \
-    echo 'ServerName localhost' >> /etc/apache2/httpd.conf
+    echo 'ServerName localhost' >> /etc/apache2/httpd.conf && \
+    echo 'AddDefaultCharset UTF-8' >> /etc/apache2/httpd.conf
 
 # Expose ports (HTTP, TCP, and Apache PHP)
 EXPOSE 8080 2909 8015
@@ -73,7 +74,16 @@ command=/usr/sbin/httpd -D FOREGROUND\n\
 autostart=true\n\
 autorestart=true\n\
 stderr_logfile=/var/log/supervisor/apache-stderr.log\n\
-stdout_logfile=/var/log/supervisor/apache-stdout.log' > /etc/supervisor/conf.d/supervisord.conf
+stdout_logfile=/var/log/supervisor/apache-stdout.log\n\
+\n\
+[program:setup-permissions]\n\
+command=sh -c "chown -R apache:apache /var/www/html/dreport && chmod -R 755 /var/www/html/dreport"\n\
+autostart=true\n\
+autorestart=false\n\
+startsecs=0\n\
+startretries=1\n\
+stderr_logfile=/var/log/supervisor/setup-stderr.log\n\
+stdout_logfile=/var/log/supervisor/setup-stdout.log' > /etc/supervisor/conf.d/supervisord.conf
 
 # Set permissions
 RUN chown -R apache:apache /var/www/html
