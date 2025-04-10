@@ -125,15 +125,15 @@ If the server can't connect to the database, ensure the MySQL server is running 
 
 ## Accessing the Server
 
-- TCP server: `tcp://localhost:8016`
-- HTTP server: `http://localhost:8080`
-- Web interface: `http://localhost:8015/dreport/`
-- MySQL database: `mysql://localhost:3306/dreports`
+- TCP server: Port 8016 (configured in eboCloudReportServer.ini)
+- HTTP server: Port 8080 (configured in eboCloudReportServer.ini)
+- Web interface: http://localhost:8015/dreport/ (existing interface)
+- MySQL database: Port 3306
 
 ## Important Notes
 
 1. The server preserves all functionalities of the original Windows server
-2. The web interface is untouched and continues to work as before
+2. The web interface is untouched and continues to work as before through http://localhost:8015/dreport/
 3. Configuration is compatible with the original INI format
 4. The REST API URL has been updated to 10.150.40.8 from 10.150.40.7
 5. All logs are stored in the `logs` directory

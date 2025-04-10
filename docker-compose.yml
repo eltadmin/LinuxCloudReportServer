@@ -35,8 +35,8 @@ services:
     depends_on:
       - db
     ports:
-      - "8080:8080"
-      - "8016:8016"
+      - "8080:8080"  # HTTP port
+      - "8016:8016"  # TCP port
     volumes:
       - ./logs:/app/logs
       - ./Updates:/app/Updates
@@ -57,9 +57,8 @@ services:
       retries: 3
       start_period: 30s
 
-# The web interface is already available from the host
-# We're just mapping it to the same network
-# This assumes the web UI is already running separately
+# Web interface is running separately on port 8015
+# URL: http://localhost:8015/dreport/
 
 networks:
   report-network:

@@ -21,8 +21,7 @@ RUN mkdir -p logs Updates
 COPY src/eboCloudReportServer.ini ./
 
 # Expose ports
-EXPOSE 8080
-EXPOSE 8016
+EXPOSE 8080 8016
 
 # Set environment variables
 ENV NODE_ENV=production
