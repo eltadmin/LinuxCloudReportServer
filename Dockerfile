@@ -1,24 +1,39 @@
-FROM node:18-alpine
+FROM php:8.2-apache
 
-# Install PHP, Apache, and required extensions
-RUN apk add --no-cache \
-    php8 \
-    php8-fpm \
-    php8-mysqli \
-    php8-json \
-    php8-openssl \
-    php8-curl \
-    php8-pdo \
-    php8-pdo_mysql \
-    php8-session \
-    php8-mbstring \
-    php8-xml \
-    php8-tokenizer \
-    apache2 \
-    php8-apache2 \
+# Install required packages and Node.js
+RUN apt-get update && apt-get install -y \
     curl \
+    wget \
+    gnupg \
+    lsb-release \
+    net-tools \
     supervisor \
-    net-tools
+    libpng-dev \
+    libzip-dev \
+    libicu-dev \
+    libjpeg-dev \
+    libfreetype6-dev \
+    unzip \
+    git
+
+# Install Node.js
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y nodejs && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Configure PHP
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg && \
+    docker-php-ext-install -j$(nproc) \
+    mysqli \
+    pdo \
+    pdo_mysql \
+    gd \
+    zip \
+    intl
+
+# Enable Apache modules
+RUN a2enmod rewrite expires deflate headers
 
 WORKDIR /app
 
@@ -38,32 +53,28 @@ COPY config/ config/
 COPY __tests__/ __tests__/
 
 # Create necessary directories
-RUN mkdir -p logs updates /var/log/apache2 /run/apache2 /var/www/html/dreport
+RUN mkdir -p logs updates
 
-# Create Apache configuration to directly run PHP files from dreport
-RUN echo 'Listen 8015' >> /etc/apache2/httpd.conf && \
-    echo '<VirtualHost *:8015>\n\
+# Create Apache virtual host for dreport
+RUN echo '<VirtualHost *:8015>\n\
     ServerName localhost\n\
     DocumentRoot /var/www/html/dreport\n\
-    ErrorLog /var/log/apache2/dreport-error.log\n\
-    CustomLog /var/log/apache2/dreport-access.log combined\n\
+    ErrorLog ${APACHE_LOG_DIR}/dreport-error.log\n\
+    CustomLog ${APACHE_LOG_DIR}/dreport-access.log combined\n\
     <Directory /var/www/html/dreport>\n\
         Options Indexes FollowSymLinks\n\
         AllowOverride All\n\
         Require all granted\n\
     </Directory>\n\
-</VirtualHost>' > /etc/apache2/conf.d/dreport.conf
+</VirtualHost>' > /etc/apache2/sites-available/dreport.conf
 
-# Enable necessary Apache modules
-RUN sed -i 's/#LoadModule rewrite_module/LoadModule rewrite_module/' /etc/apache2/httpd.conf && \
-    sed -i 's/#LoadModule deflate_module/LoadModule deflate_module/' /etc/apache2/httpd.conf && \
-    sed -i 's/#LoadModule expires_module/LoadModule expires_module/' /etc/apache2/httpd.conf && \
-    echo 'AddDefaultCharset UTF-8' >> /etc/apache2/httpd.conf && \
-    echo 'ServerName localhost' >> /etc/apache2/httpd.conf && \
-    echo 'AddHandler application/x-httpd-php .php' >> /etc/apache2/httpd.conf
+# Enable the dreport site and configure ports
+RUN echo "Listen 8015" >> /etc/apache2/ports.conf && \
+    a2ensite dreport
 
-# Create test PHP files to quickly verify if Apache is working
-RUN echo '<?php phpinfo(); ?>' > /var/www/html/dreport/phpinfo.php && \
+# Create test PHP files
+RUN mkdir -p /var/www/html/dreport && \
+    echo '<?php phpinfo(); ?>' > /var/www/html/dreport/phpinfo.php && \
     echo '<?php echo "Apache is working correctly for dreport!"; ?>' > /var/www/html/dreport/test.php
 
 # Expose ports (HTTP, TCP, and Apache PHP)
@@ -77,7 +88,7 @@ logfile=/var/log/supervisor/supervisord.log\n\
 logfile_maxbytes=50MB\n\
 logfile_backups=10\n\
 loglevel=info\n\
-pidfile=/var/run/supervisord.pid\n\
+pidfile=/run/supervisord.pid\n\
 \n\
 [program:node]\n\
 command=node server.js\n\
@@ -87,15 +98,15 @@ autorestart=true\n\
 stderr_logfile=/var/log/supervisor/node-stderr.log\n\
 stdout_logfile=/var/log/supervisor/node-stdout.log\n\
 \n\
-[program:apache]\n\
-command=/usr/sbin/httpd -DFOREGROUND\n\
+[program:apache2]\n\
+command=apache2-foreground\n\
 autostart=true\n\
 autorestart=true\n\
 stderr_logfile=/var/log/supervisor/apache-stderr.log\n\
 stdout_logfile=/var/log/supervisor/apache-stdout.log\n\
 \n\
 [program:setup-permissions]\n\
-command=sh -c "chown -R apache:apache /var/www/html && chmod -R 755 /var/www/html"\n\
+command=sh -c "chown -R www-data:www-data /var/www/html && chmod -R 755 /var/www/html"\n\
 autostart=true\n\
 autorestart=false\n\
 startsecs=0\n\
@@ -104,7 +115,7 @@ stderr_logfile=/var/log/supervisor/setup-stderr.log\n\
 stdout_logfile=/var/log/supervisor/setup-stdout.log' > /etc/supervisor/conf.d/supervisord.conf
 
 # Set permissions
-RUN chown -R apache:apache /var/www/html && chmod -R 755 /var/www/html
+RUN chown -R www-data:www-data /var/www/html && chmod -R 755 /var/www/html
 
 # Command to run supervisor which will manage both Node.js and Apache
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"] 
