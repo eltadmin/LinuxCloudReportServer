@@ -2,13 +2,14 @@ version: '3.8'
 
 services:
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: cloud-report-server
     restart: unless-stopped
     ports:
       - "8080:8080"  # HTTP port
       - "8016:8016"  # TCP port
-      - "8015:8015"  # dreport web interface port
     environment:
       - NODE_ENV=production
       - DB_HOST=database
@@ -32,9 +33,6 @@ services:
       - ./logs:/app/logs
       - ./updates:/app/updates
       - ./config:/app/config
-      - ./dreport:/var/www/html/dreport
-      - apache_logs:/var/log/apache2
-      - supervisor_logs:/var/log/supervisor
     depends_on:
       mysql:
         condition: service_healthy
@@ -48,6 +46,27 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  dreport-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.dreport
+    container_name: dreport-web
+    restart: unless-stopped
+    ports:
+      - "8015:80"  # dreport web interface port
+    volumes:
+      - ./dreport:/var/www/html
+    depends_on:
+      - mysql
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/index.php"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   database:
     image: postgres:14-alpine
