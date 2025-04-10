@@ -3,7 +3,7 @@ import logging
 import os
 from pathlib import Path
 from configparser import ConfigParser
-from server import ReportServer
+from server.server import ReportServer
 
 # Configure logging
 logging.basicConfig(
