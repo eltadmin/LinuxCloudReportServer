@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  report-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ebo-cloud-report-server
+    ports:
+      - "8080:8080"
+      - "8016:8016"
+    volumes:
+      - ./logs:/app/logs
+      - ./Updates:/app/Updates
+      - ./src/eboCloudReportServer.ini:/app/eboCloudReportServer.ini
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
+    networks:
+      - report-network
+
+  # The web interface is already available from the host
+  # We're just mapping it to the same network
+  # This assumes the web UI is already running separately
+
+networks:
+  report-network:
+    driver: bridge 
