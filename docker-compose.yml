@@ -35,12 +35,12 @@ services:
     depends_on:
       - db
     ports:
-      - "8080:8080"  # HTTP port
+      - "8080:8080"  # HTTP API port
       - "8016:8016"  # TCP port
     volumes:
-      - ./logs:/app/logs
-      - ./Updates:/app/Updates
-      - ./src/eboCloudReportServer.ini:/app/eboCloudReportServer.ini
+      - ./logs:/var/www/html/logs
+      - ./Updates:/var/www/html/Updates
+      - ./src/eboCloudReportServer.ini:/var/www/html/src/eboCloudReportServer.ini
     environment:
       - NODE_ENV=production
       - DB_HOST=db
@@ -60,24 +60,29 @@ services:
   web-interface:
     build:
       context: .
-      dockerfile: Dockerfile.webinterface
+      dockerfile: Dockerfile.fixed-webinterface
     container_name: ebo-web-interface
+    depends_on:
+      - db
+      - report-server
+    ports:
+      - "80:80"
     volumes:
       - ./dreport:/var/www/html
-    ports:
-      - "8015:80"
-    restart: unless-stopped
+    environment:
+      - DB_HOST=db
+      - DB_USER=dreports
+      - DB_PASSWORD=ftUk58_HoRs3sAzz8jk
+      - DB_NAME=dreports
     networks:
       - report-network
-    depends_on:
-      - report-server
-      - db
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/"]
+      test: ["CMD", "curl", "-f", "http://localhost/dreport/"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 30s
 
 # Web interface is available on port 8015
 # URL: http://localhost:8015/dreport/

@@ -192,3 +192,126 @@ chmod +x restart-web.sh
 4. The REST API URL has been updated to 10.150.40.8 from 10.150.40.7
 5. All logs are stored in the `logs` directory
 6. Database is integrated with the system for consistent operation
+
+# Linux Cloud Report Server
+
+Cloud-based system for monitoring and reporting on EBO cash registers.
+
+## System Overview
+
+The system consists of three main components:
+1. **MySQL Database** - Stores all the data and configuration
+2. **Report Server** - Node.js application that handles TCP and HTTP connections
+3. **Web Interface** - PHP-based web interface for managing and viewing reports
+
+## Installation with Docker
+
+The simplest way to deploy the entire system is using Docker and docker-compose.
+
+### Prerequisites
+
+- Docker Engine (19.03.0+)
+- Docker Compose (v2.0.0+)
+- Git (for cloning the repository)
+
+### Steps to Install
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/ReportComServer.git
+   cd ReportComServer
+   ```
+
+2. Build and start the services:
+   ```bash
+   cd LinuxCloudReportServer
+   docker-compose up -d
+   ```
+
+3. The system will be available at:
+   - Web Interface: http://localhost/dreport/
+   - Report Server API: http://localhost:8080
+   - TCP Server: localhost:8016
+
+### Services
+
+The docker-compose setup includes:
+
+- **db** - MySQL database server on port 3306
+- **report-server** - Node.js report server on ports 8080 (HTTP) and 8016 (TCP)
+- **web-interface** - PHP web interface on port 80
+
+## Manual Installation
+
+If you prefer to install the components separately:
+
+### Database Setup
+
+1. Install MySQL 8.0:
+   ```bash
+   sudo apt install mysql-server
+   ```
+
+2. Import the database:
+   ```bash
+   mysql -u root -p < dreports.sql
+   ```
+
+3. Create the user:
+   ```bash
+   mysql -u root -p -e "CREATE USER 'dreports'@'localhost' IDENTIFIED BY 'ftUk58_HoRs3sAzz8jk'; GRANT ALL PRIVILEGES ON dreports.* TO 'dreports'@'localhost'; FLUSH PRIVILEGES;"
+   ```
+
+### Report Server Setup
+
+1. Install Node.js and npm:
+   ```bash
+   sudo apt install nodejs npm
+   ```
+
+2. Install dependencies:
+   ```bash
+   cd src
+   npm install
+   ```
+
+3. Configure the server:
+   - Edit the `eboCloudReportServer.ini` file with your settings
+
+4. Start the server:
+   ```bash
+   node server.js
+   ```
+
+### Web Interface Setup
+
+1. Install dependencies:
+   ```bash
+   sudo apt install nginx php php-fpm php-mysql
+   ```
+
+2. Configure Nginx:
+   - Copy `nginx.conf` to `/etc/nginx/sites-available/dreport`
+   - Enable the site: `sudo ln -s /etc/nginx/sites-available/dreport /etc/nginx/sites-enabled/`
+
+3. Restart Nginx:
+   ```bash
+   sudo systemctl restart nginx
+   ```
+
+## Troubleshooting
+
+If you encounter issues with the web interface returning 404 errors:
+1. Check the nginx configuration to ensure `/dreport/` is properly mapped
+2. Verify the permissions of the web directory
+3. Check the logs at `/var/log/nginx/error.log`
+
+For database connection issues:
+1. Verify the database credentials in both server and web configurations
+2. Check if the MySQL service is running
+3. Ensure the database and required tables exist
+
+## License
+
+This software is proprietary and confidential.
+© 2024 EBO Systems

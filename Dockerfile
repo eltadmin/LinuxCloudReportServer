@@ -1,37 +1,38 @@
-FROM node:18-alpine
-
-WORKDIR /app
-
-# Install curl for healthcheck and other build dependencies
-RUN apk add --no-cache curl python3 make g++
-
-# Copy package.json and package-lock.json
-COPY src/package.json ./
+FROM php:8.1-fpm
 
 # Install dependencies
-RUN npm install --production
+RUN apt-get update && apt-get install -y \
+    nginx \
+    supervisor \
+    nodejs \
+    npm \
+    git \
+    curl \
+    zip \
+    unzip \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configure nginx
+COPY nginx.conf /etc/nginx/sites-enabled/default
+
+# Configure supervisord
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Set working directory
+WORKDIR /var/www/html
 
 # Copy application files
-COPY src/ ./
+COPY . /var/www/html
 
 # Create necessary directories
-RUN mkdir -p logs Updates
+RUN mkdir -p /var/log/supervisor
 
-# Copy configuration
-COPY src/eboCloudReportServer.ini ./
+# Install node dependencies
+RUN npm install
 
 # Expose ports
-EXPOSE 8080 8016
+EXPOSE 80 8016 8080
 
-# Set environment variables
-ENV NODE_ENV=production
-ENV DB_HOST=db
-ENV DB_USER=dreports
-ENV DB_PASSWORD=ftUk58_HoRs3sAzz8jk
-ENV DB_NAME=dreports
-
-# Add healthcheck endpoint
-RUN echo '// Health check endpoint for Docker\napp.get("/health", (req, res) => res.status(200).send("OK"));' >> server.js
-
-# Run the server
-CMD ["node", "server.js"] 
+# Start supervisord
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"] 
