@@ -15,11 +15,15 @@ RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini" && \
     sed -i 's/post_max_size = 8M/post_max_size = 20M/' "$PHP_INI_DIR/php.ini" && \
     sed -i 's/memory_limit = 128M/memory_limit = 256M/' "$PHP_INI_DIR/php.ini"
 
-# Document root is already set to /var/www/html in the base image
+# Set DirectoryIndex to automatically load index.php
+RUN echo "DirectoryIndex index.php index.html" >> /etc/apache2/apache2.conf
+
+# Create a subdirectory for dreport
+RUN mkdir -p /var/www/html/dreport
 
 # Create test files to verify PHP is working
-RUN echo '<?php phpinfo(); ?>' > /var/www/html/phpinfo.php && \
-    echo '<?php echo "PHP is working correctly!"; ?>' > /var/www/html/test.php
+RUN echo '<?php phpinfo(); ?>' > /var/www/html/dreport/phpinfo.php && \
+    echo '<?php echo "PHP is working correctly!"; ?>' > /var/www/html/dreport/test.php
 
 # Set permissions
 RUN chown -R www-data:www-data /var/www/html && \

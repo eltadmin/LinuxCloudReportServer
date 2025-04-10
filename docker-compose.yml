@@ -56,13 +56,13 @@ services:
     ports:
       - "8015:80"  # dreport web interface port
     volumes:
-      - ./dreport:/var/www/html
+      - ./dreport:/var/www/html/dreport
     depends_on:
       - mysql
     networks:
       - app-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/index.php"]
+      test: ["CMD", "curl", "-f", "http://localhost/dreport/"]
       interval: 30s
       timeout: 10s
       retries: 3
