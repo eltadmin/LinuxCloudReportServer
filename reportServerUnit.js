@@ -28,13 +28,23 @@ class ReportServer {
     
     // Server state
     this.serverId = 0;
-    this.serverName = `Tcp:${this.config.tcp?.interface || '0.0.0.0'}:${this.config.tcp?.port || 2909} / ` +
-                      `Http:${this.config.http?.interface || '0.0.0.0'}:${this.config.http?.port || 8080}`;
+    this.serverName = `Tcp:${this.config.SRV_1_TCP?.TCP_IPInterface || this.config.tcp?.interface || '0.0.0.0'}:${this.config.SRV_1_TCP?.TCP_Port || this.config.tcp?.port || 8016} / ` +
+                      `Http:${this.config.SRV_1_HTTP?.HTTP_IPInterface || this.config.http?.interface || '0.0.0.0'}:${this.config.SRV_1_HTTP?.HTTP_Port || this.config.http?.port || 8080}`;
+    
+    // Auth server URL
+    this.authServerUrl = this.config.SRV_1_AUTHSERVER?.REST_URL || this.config.server?.authServerUrl || 'http://10.150.40.7/dreport/api.php';
     
     // Connection management
     this.tcpConnections = new Map();
     this.httpConnections = new Map();
     this.loginList = new Map();
+    
+    // Initialize logins from config
+    if (this.config.SRV_1_HTTPLOGINS) {
+      Object.entries(this.config.SRV_1_HTTPLOGINS).forEach(([username, password]) => {
+        this.loginList.set(username, password);
+      });
+    }
     
     // Event emitters
     this.events = new EventEmitter();

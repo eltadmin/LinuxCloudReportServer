@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"  # HTTP port
-      - "2909:2909"  # TCP port
+      - "8016:8016"  # TCP port
       - "8015:8015"  # dreport web interface port
     environment:
       - NODE_ENV=production
@@ -22,10 +22,11 @@ services:
       - DREPORT_DB_PASSWORD=ftUk58_HoRs3sAzz8jk
       - DREPORT_DB_NAME=dreports
       - RPT_SERVER_HOST=localhost
-      - RPT_SERVER_PORT=2909
+      - RPT_SERVER_PORT=8016
       - RPT_SERVER_USER=admin
       - RPT_SERVER_PSWD=admin
       - LOG_LEVEL=2
+      - AUTH_REST_URL=http://10.150.40.8/dreport/api.php
     volumes:
       - ./logs:/app/logs
       - ./updates:/app/updates

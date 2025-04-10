@@ -111,7 +111,7 @@ module.exports = function(reportServer) {
       // Get settings
       const settings = {
         rpt_server_host: process.env.RPT_SERVER_HOST || 'localhost',
-        rpt_server_port: process.env.TCP_PORT || reportServer.config.tcp?.port || 2909,
+        rpt_server_port: process.env.TCP_PORT || reportServer.config.SRV_1_TCP?.TCP_Port || reportServer.config.tcp?.port || 8016,
         rpt_server_user: process.env.RPT_SERVER_USER || 'admin',
         rpt_server_pswd: process.env.RPT_SERVER_PSWD || 'admin',
         log_level: process.env.LOG_LEVEL || '2'

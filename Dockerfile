@@ -54,7 +54,7 @@ RUN sed -i 's/#LoadModule rewrite_module/LoadModule rewrite_module/' /etc/apache
     echo 'AddDefaultCharset UTF-8' >> /etc/apache2/httpd.conf
 
 # Expose ports (HTTP, TCP, and Apache PHP)
-EXPOSE 8080 2909 8015
+EXPOSE 8080 8016 8015
 
 # Set up supervisor to manage multiple processes
 RUN mkdir -p /etc/supervisor/conf.d /var/log/supervisor

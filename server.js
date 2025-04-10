@@ -135,13 +135,13 @@ async function initServer() {
     });
     
     // Start HTTP server
-    const httpPort = process.env.HTTP_PORT || config.http?.port || 8080;
+    const httpPort = process.env.HTTP_PORT || config.http?.port || config.SRV_1_HTTP?.HTTP_Port || 8080;
     httpServer = app.listen(httpPort, () => {
       logger.info(`HTTP server listening on port ${httpPort}`);
     });
     
     // Start TCP server
-    const tcpPort = process.env.TCP_PORT || config.tcp?.port || 2909;
+    const tcpPort = process.env.TCP_PORT || config.tcp?.port || config.SRV_1_TCP?.TCP_Port || 8016;
     tcpServer = createTcpServer(reportServer, tcpPort);
     logger.info(`TCP server listening on port ${tcpPort}`);
     
