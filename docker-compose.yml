@@ -14,6 +14,7 @@ services:
       - MYSQL_ROOT_PASSWORD=rootpassword
     volumes:
       - mysql-data:/var/lib/mysql
+      - ./dreports(8).sql:/docker-entrypoint-initdb.d/dreports.sql
     ports:
       - "3306:3306"
     networks:
@@ -21,9 +22,10 @@ services:
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u$$MYSQL_USER", "-p$$MYSQL_PASSWORD"]
       interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 5s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    command: --innodb-buffer-pool-size=512M --max-allowed-packet=64M
 
   report-server:
     build:
@@ -53,7 +55,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 30s
 
 # The web interface is already available from the host
 # We're just mapping it to the same network

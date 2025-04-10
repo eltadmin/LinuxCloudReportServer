@@ -2,8 +2,8 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-# Install curl for healthcheck and other dependencies
-RUN apk add --no-cache curl
+# Install curl for healthcheck and other build dependencies
+RUN apk add --no-cache curl python3 make g++
 
 # Copy package.json and package-lock.json
 COPY src/package.json ./

@@ -37,33 +37,84 @@ Default database credentials:
 
 When using Docker, these credentials can be modified in the docker-compose.yml file.
 
-## Running Locally
+## Running the Server
 
-### Using Node.js
+### Preparing the Environment
 
-1. Make sure Node.js and MySQL are installed
-2. Import the database schema: `mysql -u root -p < dreports(8).sql`
-3. Navigate to the `src` directory
-4. Install dependencies:
-   ```
-   npm install
-   ```
-5. Start the server:
-   ```
-   npm start
-   ```
+First, make all the shell scripts executable:
 
-### Using Docker
+```bash
+chmod +x *.sh
+```
+
+### Option 1: Auto-detect with Fallback
+
+The easiest way to start the server is to use the fallback script which will try Docker first and fall back to manual mode if needed:
+
+```bash
+./start-fallback.sh
+```
+
+### Option 2: Using Docker
 
 1. Make sure Docker and Docker Compose are installed
 2. Make sure the `dreports(8).sql` file is in the root directory
 3. Build and start the containers:
+   ```bash
+   ./start.sh
    ```
-   docker-compose up -d
+   
+To stop the Docker containers:
+```bash
+./stop.sh
+```
+
+### Option 3: Manual Start (Without Docker)
+
+If you don't want to use Docker or encounter issues with it:
+
+1. Make sure Node.js and MySQL are installed
+2. Import the database schema: 
+   ```bash
+   ./import-database.sh
    ```
-   This will:
-   - Start a MySQL container and automatically import the database
-   - Start the report server connected to the database
+3. Start the server manually:
+   ```bash
+   ./start-manual.sh
+   ```
+
+## Troubleshooting
+
+### Docker Build Issues
+
+If you encounter issues building the Docker containers, such as:
+
+```
+npm error code 127
+npm error path /app/node_modules/zlib
+npm error command failed
+npm error command sh -c node-waf clean || true; node-waf configure build
+```
+
+Try using the manual start method instead:
+
+```bash
+./start-manual.sh
+```
+
+### Database Connection Issues
+
+If the server can't connect to the database, ensure the MySQL server is running and the database is properly imported:
+
+1. Check the MySQL service:
+   ```bash
+   systemctl status mysql
+   ```
+
+2. Try manually connecting to the database:
+   ```bash
+   mysql -u dreports -pftUk58_HoRs3sAzz8jk dreports
+   ```
 
 ## Directory Structure
 
@@ -86,4 +137,4 @@ When using Docker, these credentials can be modified in the docker-compose.yml f
 3. Configuration is compatible with the original INI format
 4. The REST API URL has been updated to 10.150.40.8 from 10.150.40.7
 5. All logs are stored in the `logs` directory
-6. Database is integrated with the system for consistent operation 
+6. Database is integrated with the system for consistent operation
