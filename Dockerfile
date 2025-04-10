@@ -36,6 +36,7 @@ COPY migrations/ migrations/
 COPY monitoring/ monitoring/
 COPY config/ config/
 COPY __tests__/ __tests__/
+COPY scripts/ scripts/
 
 # Create necessary directories
 RUN mkdir -p logs updates /var/log/apache2 /run/apache2
@@ -47,10 +48,10 @@ RUN mkdir -p /var/www/html/dreport
 RUN echo 'Listen 8015\n\
 ServerName localhost\n\
 <VirtualHost *:8015>\n\
-    DocumentRoot /var/www/html\n\
+    DocumentRoot /var/www/html/dreport\n\
     ErrorLog /var/log/apache2/error.log\n\
     CustomLog /var/log/apache2/access.log combined\n\
-    <Directory /var/www/html>\n\
+    <Directory /var/www/html/dreport>\n\
         Options Indexes FollowSymLinks\n\
         AllowOverride All\n\
         Require all granted\n\
@@ -67,8 +68,9 @@ RUN sed -i 's/#LoadModule rewrite_module/LoadModule rewrite_module/' /etc/apache
 # Expose ports (HTTP, TCP, and Apache PHP)
 EXPOSE 8080 8016 8015
 
-# Create a test PHP file to verify Apache is working
+# Create test PHP files to verify Apache is working
 RUN echo '<?php phpinfo(); ?>' > /var/www/html/test.php
+RUN echo '<?php echo "Apache is working for dreport!"; ?>' > /var/www/html/dreport/test.php
 
 # Set up supervisor to manage multiple processes
 RUN mkdir -p /etc/supervisor/conf.d /var/log/supervisor
@@ -102,5 +104,8 @@ stdout_logfile=/var/log/supervisor/setup-stdout.log' > /etc/supervisor/conf.d/su
 # Set permissions
 RUN chown -R apache:apache /var/www/html
 
+# Make startup script executable
+RUN chmod +x /app/scripts/start-services.sh
+
 # Command to run supervisor which will manage both Node.js and Apache
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"] 
+CMD ["/app/scripts/start-services.sh"] 
