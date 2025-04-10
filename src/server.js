@@ -6,6 +6,7 @@
 const fs = require('fs-extra');
 const path = require('path');
 const ReportServer = require('./reportServer');
+const db = require('./dbConnection');
 
 // Constants
 const SERVER_NAME = 'EBO Cloud Report Server';
@@ -25,57 +26,82 @@ fs.ensureDirSync(logPath);
 // Create the server instance
 let server = null;
 
-try {
-  server = new ReportServer(
-    path.join(process.cwd(), INI_FILENAME),
-    INI_SECTION,
-    logPath,
-    HTTP_DEFAULT_PORT,
-    TCP_DEFAULT_PORT
-  );
-  
-  // Set up event handlers
-  server.onError = (server, connection, errorMessage) => {
-    console.error(`Error: ${errorMessage}`);
-  };
-  
-  server.onConnect = (server, connection) => {
-    console.log(`New connection from ${connection.connectionInfo.remoteIP}:${connection.connectionInfo.remotePort}`);
-  };
-  
-  server.onDisconnect = (server, connection) => {
-    console.log(`Disconnected: ${connection.connectionInfo.remoteIP}:${connection.connectionInfo.remotePort}`);
-  };
-  
-  server.onCommand = (server, connection, command) => {
-    console.log(`Command from ${connection.connectionInfo.remoteIP}:${connection.connectionInfo.remotePort}: ${command}`);
-  };
-  
-  console.log(`Server started successfully on:`);
-  console.log(`- HTTP: ${server.set_Http_Interface}:${server.set_Http_Port}`);
-  console.log(`- TCP: ${server.set_Tcp_Interface}:${server.set_Tcp_Port}`);
-  console.log(`- REST API URL: ${server.set_AuthServerUrl}`);
-  
-  // Handle termination signals
-  process.on('SIGINT', () => {
-    console.log('Received SIGINT. Shutting down server...');
-    if (server) {
-      server.destroy();
-      server = null;
-    }
-    process.exit(0);
-  });
-  
-  process.on('SIGTERM', () => {
-    console.log('Received SIGTERM. Shutting down server...');
-    if (server) {
-      server.destroy();
-      server = null;
-    }
-    process.exit(0);
-  });
-  
-} catch (error) {
-  console.error(`Failed to start server: ${error.message}`);
+// Main async function to start everything
+async function main() {
+  try {
+    // Initialize database connection
+    console.log('Initializing database connection...');
+    await db.initializeDatabase();
+    console.log('Database initialized successfully');
+    
+    // Create report server
+    server = new ReportServer(
+      path.join(process.cwd(), INI_FILENAME),
+      INI_SECTION,
+      logPath,
+      HTTP_DEFAULT_PORT,
+      TCP_DEFAULT_PORT
+    );
+    
+    // Set up event handlers
+    server.onError = (server, connection, errorMessage) => {
+      console.error(`Error: ${errorMessage}`);
+      
+      // Log to database if client ID is available
+      if (connection.clientID) {
+        db.logEvent(5, connection.clientID, errorMessage);
+      }
+    };
+    
+    server.onConnect = (server, connection) => {
+      console.log(`New connection from ${connection.connectionInfo.remoteIP}:${connection.connectionInfo.remotePort}`);
+    };
+    
+    server.onDisconnect = (server, connection) => {
+      console.log(`Disconnected: ${connection.connectionInfo.remoteIP}:${connection.connectionInfo.remotePort}`);
+    };
+    
+    server.onCommand = (server, connection, command) => {
+      console.log(`Command from ${connection.connectionInfo.remoteIP}:${connection.connectionInfo.remotePort}: ${command}`);
+      
+      // Log to database if client ID is available
+      if (connection.clientID) {
+        db.logEvent(1, connection.clientID, `Command: ${command}`);
+      }
+    };
+    
+    console.log(`Server started successfully on:`);
+    console.log(`- HTTP: ${server.set_Http_Interface}:${server.set_Http_Port}`);
+    console.log(`- TCP: ${server.set_Tcp_Interface}:${server.set_Tcp_Port}`);
+    console.log(`- REST API URL: ${server.set_AuthServerUrl}`);
+    
+  } catch (error) {
+    console.error(`Failed to start server: ${error.message}`);
+    process.exit(1);
+  }
+}
+
+// Handle termination signals
+process.on('SIGINT', async () => {
+  console.log('Received SIGINT. Shutting down server...');
+  if (server) {
+    server.destroy();
+    server = null;
+  }
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('Received SIGTERM. Shutting down server...');
+  if (server) {
+    server.destroy();
+    server = null;
+  }
+  process.exit(0);
+});
+
+// Start the server
+main().catch(error => {
+  console.error(`Fatal error: ${error.message}`);
   process.exit(1);
-} 
+}); 

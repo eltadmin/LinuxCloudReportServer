@@ -166,6 +166,18 @@ class ReportServer {
     this.httpServer.get('/', (req, res) => this.httpRouteIndex(req, res));
     this.httpServer.get('/report/:document', (req, res) => this.httpRouteGenerateReport(req, res));
     
+    // Add health check endpoint
+    this.httpServer.get('/health', (req, res) => {
+      res.status(200).send({
+        status: 'ok',
+        timestamp: new Date(),
+        httpServer: true,
+        tcpServer: this.tcpServer !== null,
+        httpConnections: this.httpConnections.size,
+        tcpConnections: this.tcpConnections.size
+      });
+    });
+    
     // Connection handling
     this.httpServer.use((req, res, next) => {
       const connection = new HttpConnection(this.logPath);

@@ -1,0 +1,20 @@
+FROM mysql:8.0
+
+# Environment variables
+ENV MYSQL_DATABASE=dreports
+ENV MYSQL_USER=dreports
+ENV MYSQL_PASSWORD=ftUk58_HoRs3sAzz8jk
+ENV MYSQL_ROOT_PASSWORD=rootpassword
+
+# Copy SQL dump - will be imported during initialization
+COPY dreports*.sql /docker-entrypoint-initdb.d/
+
+# MySQL configuration
+COPY my.cnf /etc/mysql/conf.d/
+
+# Expose port
+EXPOSE 3306
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+  CMD mysqladmin ping -h localhost -u${MYSQL_USER} -p${MYSQL_PASSWORD} || exit 1 

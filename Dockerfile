@@ -2,6 +2,9 @@ FROM node:18-alpine
 
 WORKDIR /app
 
+# Install curl for healthcheck and other dependencies
+RUN apk add --no-cache curl
+
 # Copy package.json and package-lock.json
 COPY src/package.json ./
 
@@ -23,6 +26,13 @@ EXPOSE 8016
 
 # Set environment variables
 ENV NODE_ENV=production
+ENV DB_HOST=db
+ENV DB_USER=dreports
+ENV DB_PASSWORD=ftUk58_HoRs3sAzz8jk
+ENV DB_NAME=dreports
+
+# Add healthcheck endpoint
+RUN echo '// Health check endpoint for Docker\napp.get("/health", (req, res) => res.status(200).send("OK"));' >> server.js
 
 # Run the server
 CMD ["node", "server.js"] 

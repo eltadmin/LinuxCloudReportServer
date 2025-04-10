@@ -1,11 +1,37 @@
 version: '3.8'
 
 services:
+  db:
+    build:
+      context: .
+      dockerfile: Dockerfile.mysql
+    container_name: ebo-report-db
+    restart: unless-stopped
+    environment:
+      - MYSQL_DATABASE=dreports
+      - MYSQL_USER=dreports
+      - MYSQL_PASSWORD=ftUk58_HoRs3sAzz8jk
+      - MYSQL_ROOT_PASSWORD=rootpassword
+    volumes:
+      - mysql-data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    networks:
+      - report-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u$$MYSQL_USER", "-p$$MYSQL_PASSWORD"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
   report-server:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: ebo-cloud-report-server
+    depends_on:
+      - db
     ports:
       - "8080:8080"
       - "8016:8016"
@@ -15,14 +41,27 @@ services:
       - ./src/eboCloudReportServer.ini:/app/eboCloudReportServer.ini
     environment:
       - NODE_ENV=production
+      - DB_HOST=db
+      - DB_USER=dreports
+      - DB_PASSWORD=ftUk58_HoRs3sAzz8jk
+      - DB_NAME=dreports
     restart: unless-stopped
     networks:
       - report-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
-  # The web interface is already available from the host
-  # We're just mapping it to the same network
-  # This assumes the web UI is already running separately
+# The web interface is already available from the host
+# We're just mapping it to the same network
+# This assumes the web UI is already running separately
 
 networks:
   report-network:
-    driver: bridge 
+    driver: bridge
+
+volumes:
+  mysql-data: 
