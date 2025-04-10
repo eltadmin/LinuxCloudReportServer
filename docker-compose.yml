@@ -40,6 +40,10 @@ services:
       - DB_USER=dreports
       - DB_PASSWORD=dreports
       - DB_NAME=dreports
+      - MYSQL_HOST=db
+      - MYSQL_USER=dreports
+      - MYSQL_PASSWORD=dreports
+      - MYSQL_DATABASE=dreports
     depends_on:
       db:
         condition: service_healthy

@@ -18,8 +18,15 @@ class Database
 {
    // Store the single instance of Database
    //private static $m_pInstance;
-    private static $m_pInstance;
-    private $connection;
+    private static $instance = null;
+    private $db_host;
+    private $db_user;
+    private $db_pass;
+    private $db_name;
+    private $db_link;
+    private $last_query;
+    private $magic_quotes_active;
+    private $real_escape_string_exists;
 
 
    //local settings
@@ -32,10 +39,10 @@ class Database
 
   
        // cloud1 settings
-       private $db_host='127.0.0.1';
-       private $db_user = 'dreports';
-       private $db_pass = 'ftUk58_HoRs3sAzz8jk';
-       private $db_name = 'dreports';
+       //private $db_host='127.0.0.1';
+       //private $db_user = 'dreports';
+       //private $db_pass = 'ftUk58_HoRs3sAzz8jk';
+       //private $db_name = 'dreports';
          // Private constructor to limit object instantiation to within the class
 
    /* private function __construct()
@@ -46,25 +53,35 @@ class Database
 */
     private function __construct()
     {
-        $this->connection = new mysqli($this->db_host, $this->db_user, $this->db_pass, $this->db_name);
-
-        // Check connection
-        if ($this->connection->connect_error) {
-            die("Connection failed: " . $this->connection->connect_error);
-        }
-
-        $this->connection->set_charset('utf8');
+        $this->db_host = getenv('DB_HOST') ?: 'localhost';
+        $this->db_user = getenv('DB_USER') ?: 'dreports';
+        $this->db_pass = getenv('DB_PASSWORD') ?: 'dreports';
+        $this->db_name = getenv('DB_NAME') ?: 'dreports';
+        
+        $this->open_connection();
+        $this->magic_quotes_active = false;
+        $this->real_escape_string_exists = function_exists("mysqli_real_escape_string");
     }
 
+    private function open_connection() {
+        $this->db_link = new mysqli($this->db_host, $this->db_user, $this->db_pass, $this->db_name);
+        
+        if ($this->db_link->connect_error) {
+            $this->logevent("Database connection failed: " . $this->db_link->connect_error, 1);
+            die("Database connection failed: " . $this->db_link->connect_error);
+        }
+
+        $this->db_link->set_charset('utf8');
+    }
 
        // Getter method for creating/returning the single instance of this class
        public static function getInstance()
        {
-           if (!self::$m_pInstance)
+           if (!self::$instance)
            {
-               self::$m_pInstance = new Database();
+               self::$instance = new Database();
            }
-           return self::$m_pInstance;
+           return self::$instance;
        }
 
        //public function query($query)
@@ -73,11 +90,11 @@ class Database
        //}
     public function query($query)
     {
-        return mysqli_query($this->connection, $query);
+        return mysqli_query($this->db_link, $query);
     }
     public function getConnection()
     {
-        return $this->connection;
+        return $this->db_link;
     }
 
 
