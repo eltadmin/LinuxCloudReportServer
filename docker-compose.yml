@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  report_server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    ports:
+      - "8016:8016"  # TCP server
+      - "8080:8080"  # HTTP server
+    volumes:
+      - ./server:/app
+      - ./config:/config
+    environment:
+      - DB_HOST=db
+      - DB_USER=dreports
+      - DB_PASSWORD=dreports
+      - DB_NAME=dreports
+      - AUTH_SERVER_URL=http://web:8015/dreport/api.php
+    depends_on:
+      - db
+      - web
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.php
+    ports:
+      - "8015:8015"
+    volumes:
+      - ./dreport:/var/www/html/dreport
+    environment:
+      - DB_HOST=db
+      - DB_USER=dreports
+      - DB_PASSWORD=dreports
+      - DB_NAME=dreports
+    depends_on:
+      - db
+
+  db:
+    image: mysql:8.0
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./dreports(8).sql:/docker-entrypoint-initdb.d/init.sql
+    environment:
+      - MYSQL_DATABASE=dreports
+      - MYSQL_USER=dreports
+      - MYSQL_PASSWORD=dreports
+      - MYSQL_ROOT_PASSWORD=rootpass
+
+volumes:
+  mysql_data: 
