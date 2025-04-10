@@ -13,6 +13,9 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Install PHP extensions
+RUN docker-php-ext-install pdo pdo_mysql mysqli
+
 # Configure nginx
 COPY nginx.conf /etc/nginx/sites-enabled/default
 
@@ -22,14 +25,14 @@ COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 # Set working directory
 WORKDIR /var/www/html
 
-# Copy application files
-COPY . /var/www/html
-
 # Create necessary directories
-RUN mkdir -p /var/log/supervisor
+RUN mkdir -p /var/log/supervisor /run/nginx /var/www/html/src
 
-# Install node dependencies
-RUN npm install
+# Copy Node.js application files
+COPY src/ /var/www/html/src/
+
+# Create required directories
+RUN mkdir -p /var/www/html/logs /var/www/html/Updates
 
 # Expose ports
 EXPOSE 80 8016 8080
