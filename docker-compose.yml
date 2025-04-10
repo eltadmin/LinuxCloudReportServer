@@ -30,10 +30,38 @@ services:
       - ./logs:/app/logs
       - ./updates:/app/updates
       - ./config:/app/config
-      - ../dreport:/var/www/html/dreport
+      - dreport-data:/var/www/html/dreport
     depends_on:
-      - database
-      - mysql
+      mysql:
+        condition: service_healthy
+      database:
+        condition: service_healthy
+      init-dreport:
+        condition: service_completed_successfully
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Command to copy dreport files to container at startup
+  init-dreport:
+    image: alpine:latest
+    container_name: init-dreport
+    volumes:
+      - ../dreport:/dreport-source
+      - dreport-data:/dreport-dest
+    command: >
+      /bin/sh -c "
+        echo 'Copying dreport files...' &&
+        cp -r /dreport-source/* /dreport-dest/ &&
+        cp -r /dreport-source/.htaccess /dreport-dest/ 2>/dev/null || true &&
+        chmod -R 755 /dreport-dest &&
+        echo 'Files copied successfully!'
+      "
     networks:
       - app-network
 
@@ -51,6 +79,11 @@ services:
       - "5432:5432"
     networks:
       - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   mysql:
     image: mysql:8.0
@@ -69,6 +102,11 @@ services:
     networks:
       - app-network
     command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "dreports", "-pftUk58_HoRs3sAzz8jk"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   prometheus:
     image: prom/prometheus:latest
@@ -81,6 +119,8 @@ services:
       - "9090:9090"
     networks:
       - app-network
+    depends_on:
+      - app
 
   grafana:
     image: grafana/grafana:latest
@@ -100,6 +140,7 @@ volumes:
   mysql-data:
   prometheus-data:
   grafana-data:
+  dreport-data:
 
 networks:
   app-network:

@@ -12,7 +12,7 @@ if [ ! -d "config" ]; then
 fi
 
 # Create necessary directories if they don't exist
-mkdir -p config/dreport
+mkdir -p config/dreport logs updates
 
 # Check if dreport directory exists at the correct level
 if [ ! -d "../dreport" ]; then
@@ -21,37 +21,43 @@ if [ ! -d "../dreport" ]; then
   exit 1
 fi
 
-# Ensure MySQL client is installed (for local testing)
-if ! command -v mysql &> /dev/null; then
-  echo "MySQL client not found, installing..."
-  if command -v apt-get &> /dev/null; then
-    sudo apt-get update
-    sudo apt-get install -y mysql-client
-  elif command -v yum &> /dev/null; then
-    sudo yum install -y mysql
-  elif command -v apk &> /dev/null; then
-    apk add --no-cache mysql-client
-  else
-    echo "Warning: Cannot install MySQL client automatically"
-    echo "Please install MySQL client manually if needed for local development"
-  fi
+# Add curl to Dockerfile if it's missing
+if ! grep -q "curl" Dockerfile; then
+  echo "Adding curl to Dockerfile for healthchecks..."
+  sed -i 's/supervisor/supervisor \\\n    curl/g' Dockerfile
 fi
 
-# Install dependencies
-echo "Installing Node.js dependencies..."
-npm install
+# Install curl for the troubleshooting script
+if [ -x "$(command -v apt-get)" ]; then
+  echo "Installing curl with apt-get..."
+  sudo apt-get update
+  sudo apt-get install -y curl
+elif [ -x "$(command -v yum)" ]; then
+  echo "Installing curl with yum..."
+  sudo yum install -y curl
+elif [ -x "$(command -v apk)" ]; then
+  echo "Installing curl with apk..."
+  apk add --no-cache curl
+fi
 
 # Start the containers in detached mode
 echo "Starting docker containers..."
+docker-compose down
 docker-compose up -d
 
 # Wait for services to start
-echo "Waiting for services to start (30 seconds)..."
-sleep 30
+echo "Waiting for services to start (60 seconds)..."
+sleep 60
+
+# Run the troubleshooting script
+echo "Running troubleshooting checks..."
+chmod +x scripts/troubleshoot.sh
+./scripts/troubleshoot.sh
 
 # Initialize dreport
 echo "Initializing DReport system..."
-npm run init-dreport
+curl -X GET http://localhost:8080/init-dreport
 
 echo "Setup complete! DReport is now available at: http://localhost:8015/dreport/index.php"
-echo "You can restart the services at any time with: docker-compose restart" 
+echo "You can restart the services at any time with: docker-compose restart"
+echo "If you encounter issues, run the troubleshooting script: ./scripts/troubleshoot.sh" 

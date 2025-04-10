@@ -26,14 +26,17 @@ RUN npm install --omit=dev
 # Copy application files
 COPY . .
 
-# Copy dreport to Apache's web directory
-RUN mkdir -p /var/www/html/dreport
-COPY ../dreport/ /var/www/html/dreport/
-
 # Configure Apache for dreport
-RUN echo '<VirtualHost *:8015>\n\
+RUN mkdir -p /var/www/html/dreport
+RUN echo 'Listen 8015\n\
+<VirtualHost *:8015>\n\
     DocumentRoot /var/www/html\n\
     <Directory /var/www/html>\n\
+        Options Indexes FollowSymLinks\n\
+        AllowOverride All\n\
+        Require all granted\n\
+    </Directory>\n\
+    <Directory /var/www/html/dreport>\n\
         Options Indexes FollowSymLinks\n\
         AllowOverride All\n\
         Require all granted\n\
@@ -43,12 +46,17 @@ RUN echo '<VirtualHost *:8015>\n\
 </VirtualHost>' > /etc/apache2/conf.d/dreport.conf
 
 # Create necessary directories
-RUN mkdir -p logs updates
+RUN mkdir -p logs updates /var/log/apache2
+
+# Setup Apache modules and configurations
+RUN sed -i 's/#LoadModule rewrite_module/LoadModule rewrite_module/' /etc/apache2/httpd.conf && \
+    echo 'ServerName localhost' >> /etc/apache2/httpd.conf
 
 # Expose ports (HTTP, TCP, and Apache PHP)
 EXPOSE 8080 2909 8015
 
 # Set up supervisor to manage multiple processes
+RUN mkdir -p /etc/supervisor/conf.d /var/log/supervisor
 RUN echo '[supervisord]\n\
 nodaemon=true\n\
 \n\
@@ -61,17 +69,14 @@ stderr_logfile=/var/log/supervisor/node-stderr.log\n\
 stdout_logfile=/var/log/supervisor/node-stdout.log\n\
 \n\
 [program:apache]\n\
-command=httpd -D FOREGROUND\n\
+command=/usr/sbin/httpd -D FOREGROUND\n\
 autostart=true\n\
 autorestart=true\n\
 stderr_logfile=/var/log/supervisor/apache-stderr.log\n\
 stdout_logfile=/var/log/supervisor/apache-stdout.log' > /etc/supervisor/conf.d/supervisord.conf
 
-RUN mkdir -p /var/log/supervisor
-
 # Set permissions
-RUN chown -R apache:apache /var/www/html/dreport
-RUN chmod -R 755 /var/www/html/dreport
+RUN chown -R apache:apache /var/www/html
 
 # Command to run supervisor which will manage both Node.js and Apache
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"] 
