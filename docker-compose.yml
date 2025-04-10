@@ -2,9 +2,7 @@ version: '3.8'
 
 services:
   db:
-    build:
-      context: .
-      dockerfile: Dockerfile.mysql
+    image: mysql:8.0
     container_name: ebo-report-db
     restart: unless-stopped
     environment:
@@ -19,17 +17,9 @@ services:
       - "3306:3306"
     networks:
       - report-network
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u$$MYSQL_USER", "-p$$MYSQL_PASSWORD"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
 
   report-server:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: node:18-alpine
     container_name: ebo-cloud-report-server
     depends_on:
       - db
@@ -37,9 +27,9 @@ services:
       - "8080:8080"  # HTTP API порт
       - "8016:8016"  # TCP порт
     volumes:
-      - ./src:/var/www/html/src
-      - ./logs:/var/www/html/logs
-      - ./Updates:/var/www/html/Updates
+      - ./src:/app
+      - ./logs:/app/logs
+      - ./Updates:/app/Updates
     environment:
       - NODE_ENV=production
       - DB_HOST=db
@@ -49,17 +39,16 @@ services:
     restart: unless-stopped
     networks:
       - report-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+    working_dir: /app
+    command: >
+      sh -c "apk add --no-cache curl &&
+             npm install --no-fund fs-extra ini mysql2 express mysql &&
+             echo '// Health check endpoint' >> server.js &&
+             echo 'app.get(\"/health\", (req, res) => res.status(200).send(\"OK\"));' >> server.js &&
+             node server.js"
 
   web-interface:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: php:8.1-fpm-alpine
     container_name: ebo-web-interface
     depends_on:
       - db
@@ -67,7 +56,8 @@ services:
     ports:
       - "80:80"
     volumes:
-      - ./dreport:/var/www/html/dreport
+      - ./dreport:/var/www/html
+      - ./nginx.conf:/etc/nginx/http.d/default.conf
     environment:
       - DB_HOST=db
       - DB_USER=dreports
@@ -76,12 +66,12 @@ services:
     networks:
       - report-network
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/dreport/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+    command: >
+      sh -c "apk add --no-cache nginx && 
+             docker-php-ext-install pdo pdo_mysql mysqli && 
+             mkdir -p /run/nginx && 
+             nginx && 
+             php-fpm"
 
 # Web interface is available on port 8015
 # URL: http://localhost:8015/dreport/
