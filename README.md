@@ -190,4 +190,44 @@ Access Grafana at http://localhost:3000 (default credentials: admin/admin)
 
 ## License
 
-See the LICENSE file for details. 
+See the LICENSE file for details.
+
+## DReport Web Interface Integration
+
+The system now includes integration with the DReport web interface, which provides a user-friendly way to access data collected by the LinuxCloudReportServer. 
+
+### Features
+
+- Web-based access to connected clients and their reports
+- Client information synchronization between the TCP server and the web interface
+- Database integration with MySQL for the DReport interface
+
+### Access
+
+The DReport web interface can be accessed at:
+
+```
+http://localhost:8015/dreport/index.php
+```
+
+### Configuration
+
+The integration between LinuxCloudReportServer and DReport is automatic, with the following components:
+
+1. The MySQL database for DReport data storage
+2. API endpoints for data synchronization between servers
+3. Apache web server hosting the PHP interface
+
+### Initialization
+
+When the system starts up, it automatically:
+
+1. Sets up the DReport database tables if they don't exist
+2. Syncs server settings to the DReport database
+3. Configures the web interface to connect to the report server
+
+You can manually trigger synchronization by using:
+
+```
+npm run init-dreport
+``` 

@@ -68,7 +68,9 @@ async function initServer() {
     const app = express();
     
     // Security middleware
-    app.use(helmet());
+    app.use(helmet({
+      contentSecurityPolicy: false  // Disable CSP for compatibility with dreport
+    }));
     app.use(cors());
     app.use(bodyParser.json());
     app.use(bodyParser.urlencoded({ extended: true }));
@@ -88,6 +90,7 @@ async function initServer() {
     // Mount API routes
     app.use('/api', require('./routes/api')(reportServer));
     app.use('/auth', require('./routes/auth')());
+    app.use('/dreport-api', require('./routes/dreport')(reportServer));
     
     // Health check endpoint
     app.get('/health', (req, res) => {
@@ -100,6 +103,34 @@ async function initServer() {
           tcp: 'running'
         }
       });
+    });
+
+    // Initialize dreport system
+    app.get('/init-dreport', async (req, res) => {
+      try {
+        // Get settings
+        const response = await fetch(`http://localhost:8080/dreport-api/settings`);
+        const result = await response.json();
+        
+        if (result.success) {
+          logger.info('DReport system initialized successfully');
+          res.status(200).json({ 
+            success: true,
+            message: 'DReport system initialized successfully' 
+          });
+        } else {
+          throw new Error('Failed to initialize DReport settings');
+        }
+      } catch (error) {
+        logger.error('Failed to initialize DReport system', { error: error.message });
+        res.status(500).json({ 
+          success: false,
+          error: {
+            message: 'Failed to initialize DReport system',
+            details: error.message
+          }
+        });
+      }
     });
     
     // Start HTTP server

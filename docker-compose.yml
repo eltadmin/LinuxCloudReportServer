@@ -8,6 +8,7 @@ services:
     ports:
       - "8080:8080"  # HTTP port
       - "2909:2909"  # TCP port
+      - "8015:8015"  # dreport web interface port
     environment:
       - NODE_ENV=production
       - DB_HOST=database
@@ -16,12 +17,23 @@ services:
       - DB_USER=postgres
       - DB_PASSWORD=postgres
       - JWT_SECRET=replace_with_secure_secret_in_production
+      - DREPORT_DB_HOST=mysql
+      - DREPORT_DB_USER=dreports
+      - DREPORT_DB_PASSWORD=ftUk58_HoRs3sAzz8jk
+      - DREPORT_DB_NAME=dreports
+      - RPT_SERVER_HOST=localhost
+      - RPT_SERVER_PORT=2909
+      - RPT_SERVER_USER=admin
+      - RPT_SERVER_PSWD=admin
+      - LOG_LEVEL=2
     volumes:
       - ./logs:/app/logs
       - ./updates:/app/updates
       - ./config:/app/config
+      - ../dreport:/var/www/html/dreport
     depends_on:
       - database
+      - mysql
     networks:
       - app-network
 
@@ -39,6 +51,24 @@ services:
       - "5432:5432"
     networks:
       - app-network
+
+  mysql:
+    image: mysql:8.0
+    container_name: dreport-db
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=ftUk58_HoRs3sAzz8jk
+      - MYSQL_DATABASE=dreports
+      - MYSQL_USER=dreports
+      - MYSQL_PASSWORD=ftUk58_HoRs3sAzz8jk
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./config/dreport_schema.sql:/docker-entrypoint-initdb.d/dreport_schema.sql
+    ports:
+      - "3306:3306"
+    networks:
+      - app-network
+    command: --default-authentication-plugin=mysql_native_password
 
   prometheus:
     image: prom/prometheus:latest
@@ -67,6 +97,7 @@ services:
 
 volumes:
   db-data:
+  mysql-data:
   prometheus-data:
   grafana-data:
 
