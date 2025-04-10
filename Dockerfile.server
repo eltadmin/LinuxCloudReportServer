@@ -14,7 +14,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy server code
-COPY server/ .
+COPY server/ server/
+COPY main.py .
 COPY config/ /config/
 
 # Create necessary directories
@@ -23,6 +24,7 @@ RUN mkdir -p /app/logs /app/updates
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV CONFIG_PATH=/config/eboCloudReportServer.ini
+ENV PYTHONPATH=/app
 
 # Expose ports
 EXPOSE 8016
