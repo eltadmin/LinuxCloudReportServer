@@ -6,9 +6,9 @@ from datetime import datetime, timedelta
 import aiohttp
 import zlib
 from pathlib import Path
-from .tcp_server import TCPServer
-from .http_server import HTTPServer
-from .db import Database
+from tcp_server import TCPServer
+from http_server import HTTPServer
+from db import Database
 
 logger = logging.getLogger(__name__)
 

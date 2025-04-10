@@ -9,17 +9,22 @@ services:
       - "8016:8016"  # TCP server
       - "8080:8080"  # HTTP server
     volumes:
-      - ./server:/app
+      - ./server:/app/server
       - ./config:/config
+      - ./logs:/app/logs
+      - ./Updates:/app/updates
     environment:
       - DB_HOST=db
       - DB_USER=dreports
       - DB_PASSWORD=dreports
       - DB_NAME=dreports
       - AUTH_SERVER_URL=http://web:8015/dreport/api.php
+      - PYTHONPATH=/app
     depends_on:
-      - db
-      - web
+      db:
+        condition: service_healthy
+      web:
+        condition: service_started
 
   web:
     build:
@@ -29,13 +34,15 @@ services:
       - "8015:8015"
     volumes:
       - ./dreport:/var/www/html/dreport
+      - php_vendor:/var/www/html/dreport/protected/slim/vendor
     environment:
       - DB_HOST=db
       - DB_USER=dreports
       - DB_PASSWORD=dreports
       - DB_NAME=dreports
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
   db:
     image: mysql:8.0
@@ -49,6 +56,12 @@ services:
       - MYSQL_USER=dreports
       - MYSQL_PASSWORD=dreports
       - MYSQL_ROOT_PASSWORD=rootpass
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
-  mysql_data: 
+  mysql_data:
+  php_vendor: 
