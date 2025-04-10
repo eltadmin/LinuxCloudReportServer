@@ -12,15 +12,15 @@ services:
       - MYSQL_ROOT_PASSWORD=rootpassword
     volumes:
       - mysql-data:/var/lib/mysql
-      - ./dreports(8).sql:/docker-entrypoint-initdb.d/dreports.sql
+      - ../dreports(8).sql:/docker-entrypoint-initdb.d/dreports.sql
     ports:
       - "3306:3306"
     networks:
       - report-network
 
-  report-server:
+  tcp-server:
     image: node:18-alpine
-    container_name: ebo-cloud-report-server
+    container_name: ebo-cloud-tcp-server
     depends_on:
       - db
     ports:
@@ -42,21 +42,19 @@ services:
     working_dir: /app
     command: >
       sh -c "apk add --no-cache curl &&
-             npm install --no-fund fs-extra ini mysql2 express mysql &&
-             echo '// Health check endpoint' >> server.js &&
-             echo 'app.get(\"/health\", (req, res) => res.status(200).send(\"OK\"));' >> server.js &&
+             npm install --no-fund fs-extra ini mysql2 express mysql net &&
              node server.js"
 
-  web-interface:
+  web:
     image: php:8.1-fpm-alpine
     container_name: ebo-web-interface
     depends_on:
       - db
-      - report-server
+      - tcp-server
     ports:
       - "80:80"
     volumes:
-      - ./dreport:/var/www/html
+      - ../dreport:/var/www/html/dreport
       - ./nginx.conf:/etc/nginx/http.d/default.conf
     environment:
       - DB_HOST=db

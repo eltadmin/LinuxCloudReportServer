@@ -9,11 +9,11 @@ docker-compose down
 docker-compose up -d
 
 echo ""
-echo "Системата е стартирана!"
+echo "Системата е стартирана успешно!"
 echo "Достъпни са следните услуги:"
+echo "- TCP сървър: порт 8016"
+echo "- HTTP API: http://localhost:8080"
 echo "- Уеб интерфейс: http://localhost/dreport/"
-echo "- Report Server API: http://localhost:8080"
-echo "- TCP Server: localhost:8016"
 echo ""
 echo "За преглед на логовете използвайте:"
 echo "docker-compose logs -f"
