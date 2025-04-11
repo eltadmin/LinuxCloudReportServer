@@ -1,4 +1,4 @@
-FROM php:8.0-apache
+FROM php:8.2-apache
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -28,7 +28,7 @@ RUN mkdir -p /var/www/html/dreport/protected/slim \
 COPY php.ini /usr/local/etc/php/
 
 # Set timezone
-RUN echo "date.timezone = UTC" > /usr/local/etc/php/conf.d/timezone.ini
+RUN echo "date.timezone = Europe/Berlin" > /usr/local/etc/php/conf.d/timezone.ini
 
 # The dreport directory will be mounted as a volume
 
