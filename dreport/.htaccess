@@ -1,5 +1,5 @@
 # Enable logging
-LogLevel debug
+# LogLevel debug (disabled - not allowed in .htaccess)
 
 # block directory browsing
 Options All -Indexes
