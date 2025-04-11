@@ -1,0 +1,69 @@
+# Update Instructions to Fix Circular Import Error
+
+We need to fix a circular import issue in the server code. Follow these steps:
+
+1. Create a new file `server/constants.py` with the following content:
+```python
+"""
+Constants for the Report Server
+"""
+
+# Dictionary used for crypto key generation - must match client dictionary exactly
+CRYPTO_DICTIONARY = [
+    '123hk12h8dcal',
+    'FT676Ugug6sFa',
+    'a6xbBa7A8a9la',
+    'qMnxbtyTFvcqi',
+    'cx7812vcxFRCC',
+    'bab7u682ftysv',
+    'YGbsux&Ygsyxg',
+    'MSN><hu8asG&&',
+    '23yY88syHXvvs',
+    '987sX&sysy891'
+]
+```
+
+2. Edit `server/__init__.py` to remove the CRYPTO_DICTIONARY and move the imports after the logging configuration:
+```python
+"""
+Report Server Package
+"""
+
+import logging
+import sys
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+
+from .server import ReportServer
+from .tcp_server import TCPServer
+from .http_server import HTTPServer
+from .db import Database
+from .crypto import DataCompressor
+
+__all__ = ['ReportServer', 'TCPServer', 'HTTPServer', 'Database', 'DataCompressor']
+```
+
+3. Update `server/tcp_server.py` to import CRYPTO_DICTIONARY from constants instead:
+```python
+# Change this line:
+from . import CRYPTO_DICTIONARY
+
+# To this:
+from .constants import CRYPTO_DICTIONARY
+```
+
+4. Rebuild and restart the server containers:
+```bash
+docker-compose down
+docker-compose up -d --build
+```
+
+5. Check the logs to verify the server is starting correctly:
+```bash
+docker-compose logs -f
+``` 

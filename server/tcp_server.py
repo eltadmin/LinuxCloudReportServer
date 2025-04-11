@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 import random
 import string
-from . import CRYPTO_DICTIONARY
+from .constants import CRYPTO_DICTIONARY
 from .crypto import DataCompressor
 
 logger = logging.getLogger(__name__)
