@@ -175,10 +175,17 @@ class TCPServer:
                 
                 if response:
                     logger.info(f"Sending response to {peer}: {response}")
-                    # Ensure response ends with a newline
-                    if not response.endswith('\n'):
-                        response += '\n'
-                    writer.write(response.encode())
+                    
+                    # For INIT command response, we need to preserve exact format
+                    # Don't add an extra newline as the response already has proper formatting
+                    if command.startswith('INIT'):
+                        writer.write(response.encode())
+                    else:
+                        # For other commands, ensure response ends with a newline
+                        if not response.endswith('\n'):
+                            response += '\n'
+                        writer.write(response.encode())
+                        
                     await writer.drain()
                     
         except asyncio.IncompleteReadError:
@@ -301,9 +308,10 @@ class TCPServer:
                 conn.authenticated = True
                 logger.info(f"Connection authenticated for client {peer}")
                 
-                # Return response with server key and length
-                response = f'200 OK\r\nLEN={key_len}\r\nKEY={server_key}\r\n\r\n'
-                logger.info(f"Sending INIT response: {response}")
+                # Return response with server key and length - in the exact format expected by Delphi client
+                # The format must use CRLF for line endings and the last line must be empty
+                response = f"200 OK\r\nLEN={key_len}\r\nKEY={server_key}\r\n\r\n"
+                logger.info(f"Sending INIT response: 200 OK\\r\\nLEN={key_len}\\r\\nKEY={server_key}\\r\\n\\r\\n")
                 return response
                 
             elif cmd == 'ERRL':
