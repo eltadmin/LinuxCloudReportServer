@@ -1,37 +1,22 @@
 <?php
-session_start();
-if(!isset($_SESSION['s_authenticated']) || empty($_SESSION['s_authenticated'])){
-    header("location:../index.php");
-}
+define('DREPORT_INIT', true);
+require_once 'init.php';
+checkAuth();
 
+// Initialize variables
+$objid = isset($_GET["id"]) ? $_GET["id"] : (isset($_SESSION['s_objectid']) ? $_SESSION['s_objectid'] : '');
+$objname = isset($_GET["n"]) ? html_entity_decode($_GET["n"]) : (isset($_SESSION['s_objectname']) ? html_entity_decode($_SESSION['s_objectname']) : '');
+$deviceid = isset($_SESSION['s_deviceid']) ? $_SESSION['s_deviceid'] : '0';
+
+// Store in session
+$_SESSION['s_objectid'] = $objid;
+$_SESSION['s_objectname'] = $objname;
 $_SESSION['parent_url'] = array();
 
 include_once 'language.php';
 include('database.class.php');
 $pDatabase = Database::getInstance();
 $result = $pDatabase->query("set names 'utf8'");
-
-$objid = "";
-if(isset($_GET["id"])){
-    $objid = $_GET["id"];
-} else {
-    $objid = $_SESSION['s_objectid'];
-}
-$_SESSION['s_objectid'] = $objid;
-
-$objname = "";
-if(isset($_GET["n"])){
-    $objname = html_entity_decode($_GET["n"]);
-} else {
-    $objname = html_entity_decode($_SESSION['s_objectname']);
-}
-$_SESSION['s_objectname'] = $objname;
-
-if(isset($_SESSION['s_deviceid'])){
-    $deviceid = $_SESSION['s_deviceid'];
-} else {
-    $deviceid = "0";
-}
 ?>
 <!DOCTYPE html>
 <head>

@@ -1,3 +1,16 @@
+<?php
+define('DREPORT_INIT', true);
+require_once 'init.php';
+checkAuth();
+
+// Initialize variables
+$chartBars = 0;
+$objectid = isset($_GET["id"]) ? $_GET["id"] : (isset($_SESSION['s_objectid']) ? $_SESSION['s_objectid'] : '');
+$deviceid = isset($_SESSION['s_deviceid']) ? $_SESSION['s_deviceid'] : '0';
+$rptdate = isset($_GET["date"]) ? $_GET["date"] : '';
+$objectname = isset($_SESSION['s_objectname']) ? $_SESSION['s_objectname'] : '';
+
+?>
 <html>
 <head>
   <meta charset="UTF-8">
@@ -11,15 +24,16 @@
   <link rel="stylesheet" href="css/box.css">
   <script type="text/javascript" src="js/jquery.min.js" ></script>
   <script type="text/javascript" src="js/jquery.alerts.js"></script>
-    <style>
+  <link rel="stylesheet" href="css/jquery.alerts.css">
+  <style>
   .button {
     display: inline-block;  
     border-radius: 20px;
     font-size: 14px;
     text-align: center; 
     color: white;
-	transition: background-color 0.3s ease;
-	box-shadow: rgb(38, 70, 83) 0px 11px 8px -5px;
+    transition: background-color 0.3s ease;
+    box-shadow: rgb(38, 70, 83) 0px 11px 8px -5px;
   }
   .color-1 { background-color: #00898C; }
   .color-5 { background-color: #FBB03B; }
@@ -30,8 +44,7 @@
   .color-5:hover, .color-5:active  {
     background-color: #e18e0a;  
   }
-  
-</style>
+  </style>
 
 <?php
     session_start();
@@ -63,26 +76,8 @@
     $divLoader = new loadingDiv;
     $divLoader->loader();
 
-    $objectid = "";
-    if(isset($_GET["id"])){
-     $objectid = $_GET["id"];
-    }
-    else {
-     $objectid = $_SESSION['s_objectid'];
-    }
+    // Store objectid in session
     $_SESSION['s_objectid'] = $objectid;
-
-    if(isset($_SESSION['s_deviceid'])){
-     $deviceid = $_SESSION['s_deviceid'];
-    }
-    else {
-     $deviceid = "0";
-    }
-    // get pluturnover date param for sql
-    $rptdate = "";
-    if(isset($_GET["date"])){
-     $rptdate = $_GET["date"];
-    }
 
     include('database.class.php');
     $pDatabase = Database::getInstance();
