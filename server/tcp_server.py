@@ -143,7 +143,7 @@ class TCPServer:
                 logger.info(f"Connection authenticated for client {peer}")
                 
                 # Return response with server key and length
-                response = f'200 OK\r\nLEN={key_len} KEY={server_key}\r\n'
+                response = f'200 OK\r\nLEN={key_len}\r\nKEY={server_key}\r\n'
                 logger.info(f"Sending INIT response: {response}")
                 return response
                 
