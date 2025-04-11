@@ -65,7 +65,7 @@ class TCPServer:
                     continue
                     
                 # Handle command
-                response = await self.handle_command(conn, command)
+                response = await self.handle_command(conn, command, peer)
                 logger.info(f"Sending response to {peer}: {response}")
                 
                 # Send response
@@ -87,7 +87,7 @@ class TCPServer:
             writer.close()
             await writer.wait_closed()
             
-    async def handle_command(self, conn: TCPConnection, command: str) -> str:
+    async def handle_command(self, conn: TCPConnection, command: str, peer: tuple) -> str:
         """Handle TCP command."""
         parts = command.split(' ')
         cmd = parts[0].upper()
@@ -147,8 +147,11 @@ class TCPServer:
                 logger.info(f"Sending INIT response: {response}")
                 return response
                 
-            elif not conn.authenticated:
-                return 'ERROR Not authenticated'
+            elif cmd == 'ERRL':
+                # Handle error logging from client
+                error_msg = ' '.join(parts[1:])
+                logger.error(f"Client error: {error_msg}")
+                return 'OK'
                 
             elif cmd == 'PING':
                 conn.last_ping = datetime.now()
