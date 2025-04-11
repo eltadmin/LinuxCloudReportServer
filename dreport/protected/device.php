@@ -1,24 +1,27 @@
 <?php
+define('DREPORT_INIT', true);
+require_once __DIR__ . '/init.php';
+
+// Initialize session if not already started
+if (session_status() === PHP_SESSION_NONE) {
     session_start();
-    if(!isset($_SESSION['s_authenticated']) || empty($_SESSION['s_authenticated'])){
-    	header("location:../index.php");
-    	//die();
-    }
+}
+checkAuth();
 
-    include_once 'language.php';
+// Initialize variables
+$deviceid = isset($_SESSION['s_deviceid']) ? $_SESSION['s_deviceid'] : '0';
+$objectid = isset($_SESSION['s_objectid']) ? $_SESSION['s_objectid'] : '';
 
-    include('database.class.php');
-    $pDatabase = Database::getInstance();
-    $pDatabase->query("set names 'utf8'");
+include_once 'language.php';
 
-    $deviceid = "";
-    if(isset($_GET["id"])){
-     $deviceid = $_GET["id"];
-    }
-    else {
-     $deviceid = $_SESSION['s_deviceid'];
-    }
-    $_SESSION['s_deviceid'] = $deviceid;
+include('database.class.php');
+$pDatabase = Database::getInstance();
+$pDatabase->query("set names 'utf8'");
+
+if(isset($_GET["id"])){
+ $deviceid = $_GET["id"];
+}
+$_SESSION['s_deviceid'] = $deviceid;
 
 ?>
 <html>

@@ -1,6 +1,11 @@
 <?php
 define('DREPORT_INIT', true);
-require_once 'init.php';
+require_once __DIR__ . '/init.php';
+
+// Initialize session if not already started
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 checkAuth();
 
 // Initialize variables
@@ -10,7 +15,11 @@ $deviceid = isset($_SESSION['s_deviceid']) ? $_SESSION['s_deviceid'] : '0';
 $rptdate = isset($_GET["date"]) ? $_GET["date"] : '';
 $objectname = isset($_SESSION['s_objectname']) ? $_SESSION['s_objectname'] : '';
 
+// Store objectid in session
+$_SESSION['s_objectid'] = $objectid;
+
 ?>
+<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
@@ -47,7 +56,6 @@ $objectname = isset($_SESSION['s_objectname']) ? $_SESSION['s_objectname'] : '';
   </style>
 
 <?php
-    session_start();
     if(!isset($_SESSION['s_authenticated']) || empty($_SESSION['s_authenticated'])){
     header("location:../index.php");
     }
@@ -75,9 +83,6 @@ $objectname = isset($_SESSION['s_objectname']) ? $_SESSION['s_objectname'] : '';
     require_once ('class.loading.div.php');
     $divLoader = new loadingDiv;
     $divLoader->loader();
-
-    // Store objectid in session
-    $_SESSION['s_objectid'] = $objectid;
 
     include('database.class.php');
     $pDatabase = Database::getInstance();

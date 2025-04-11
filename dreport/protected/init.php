@@ -1,4 +1,12 @@
 <?php
+// Authentication check function - defined globally
+function checkAuth() {
+    if (!isset($_SESSION['s_authenticated']) || empty($_SESSION['s_authenticated'])) {
+        header("Location: ../index.php");
+        exit();
+    }
+}
+
 // Prevent direct access
 if (!defined('DREPORT_INIT')) {
     define('DREPORT_INIT', true);
@@ -45,14 +53,6 @@ if (!defined('DREPORT_INIT')) {
     foreach ($default_config as $key => $value) {
         if (!isset($_SESSION[$key])) {
             $_SESSION[$key] = $value;
-        }
-    }
-    
-    // Authentication check
-    function checkAuth() {
-        if (!isset($_SESSION['s_authenticated']) || empty($_SESSION['s_authenticated'])) {
-            header("Location: ../index.php");
-            exit();
         }
     }
 }
