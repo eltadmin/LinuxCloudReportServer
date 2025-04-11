@@ -70,7 +70,10 @@ class TCPServer:
                 
                 # Send response
                 if response:
-                    writer.write(response.encode() + b'\n')
+                    # Ensure response ends with a newline
+                    if not response.endswith('\n'):
+                        response += '\n'
+                    writer.write(response.encode())
                     await writer.drain()
                     
         except asyncio.IncompleteReadError:
