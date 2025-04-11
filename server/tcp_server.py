@@ -187,15 +187,17 @@ class TCPServer:
                         if isinstance(response, str):
                             # Backward compatibility for string responses
                             logger.info(f"Sending response (string) to {peer}: {response}")
-                            if not response.endswith('\n'):
-                                response += '\n'
+                            # Convert to proper CRLF line endings that Delphi expects
+                            if not response.endswith('\r\n'):
+                                response = response.rstrip('\n') + '\r\n'
                             writer.write(response.encode('utf-8'))
                         else:
                             # Bytes response
                             log_response = response.decode('utf-8', errors='replace')
                             logger.info(f"Sending response (bytes) to {peer}: {log_response}")
-                            if not response.endswith(b'\n'):
-                                response += b'\n'
+                            # Make sure response has CRLF line endings
+                            if not response.endswith(b'\r\n'):
+                                response = response.rstrip(b'\n') + b'\r\n'
                             writer.write(response)
                     
                     await writer.drain()
@@ -315,6 +317,7 @@ class TCPServer:
                 conn.crypto_key = server_key + crypto_dict_part + host_part
                 
                 logger.info(f"Generated crypto key: server_key={server_key}, length={key_len}, full_key={conn.crypto_key}")
+                logger.info(f"Crypto key components: dict_part='{crypto_dict_part}', host_part='{host_part}', key_id={key_id}")
                 
                 # Mark connection as authenticated
                 conn.authenticated = True
@@ -336,6 +339,7 @@ class TCPServer:
                 response += b"KEY=" + server_key.encode('ascii') + b"\r\n"
                 response += b"\r\n"  # Blank line at the end
                 
+                # Log the exact byte-level response for debugging
                 logger.info(f"INIT response (exact format): status=200, LEN={key_len}, KEY={server_key}")
                 return response
                 
@@ -417,7 +421,7 @@ class TCPServer:
                 self.connections[conn.client_id] = conn
                 
                 # Return response
-                return f'200 OK\nDATA={encrypted_response}'.encode('utf-8')
+                return f'200 OK\r\nDATA={encrypted_response}\r\n\r\n'.encode('utf-8')
                 
             elif cmd == 'VERS':
                 # Handle version check and updates list
@@ -445,7 +449,7 @@ class TCPServer:
                         if not encrypted_response:
                             logger.error(f"Failed to encrypt VERS response: {conn.last_error}")
                             return f'ERROR Failed to encrypt VERS response: {conn.last_error}'.encode('utf-8')
-                        return f'200 OK\nDATA={encrypted_response}'.encode('utf-8')
+                        return f'200 OK\r\nDATA={encrypted_response}\r\n\r\n'.encode('utf-8')
                     else:
                         # Plain response if no crypto key
                         return json.dumps({'updates': updates}).encode('utf-8')
