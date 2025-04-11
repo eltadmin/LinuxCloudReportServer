@@ -1,19 +1,3 @@
-<?php
-require_once __DIR__ . '/init.php';
-checkAuth();
-
-// Initialize variables
-$chartBars = 0;
-$objectid = isset($_GET["id"]) ? $_GET["id"] : (isset($_SESSION['s_objectid']) ? $_SESSION['s_objectid'] : '');
-$deviceid = isset($_SESSION['s_deviceid']) ? $_SESSION['s_deviceid'] : '0';
-$rptdate = isset($_GET["date"]) ? $_GET["date"] : '';
-$objectname = isset($_SESSION['s_objectname']) ? $_SESSION['s_objectname'] : '';
-
-// Store objectid in session
-$_SESSION['s_objectid'] = $objectid;
-
-?>
-<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
@@ -27,16 +11,15 @@ $_SESSION['s_objectid'] = $objectid;
   <link rel="stylesheet" href="css/box.css">
   <script type="text/javascript" src="js/jquery.min.js" ></script>
   <script type="text/javascript" src="js/jquery.alerts.js"></script>
-  <link rel="stylesheet" href="css/jquery.alerts.css">
-  <style>
+    <style>
   .button {
     display: inline-block;  
     border-radius: 20px;
     font-size: 14px;
     text-align: center; 
     color: white;
-    transition: background-color 0.3s ease;
-    box-shadow: rgb(38, 70, 83) 0px 11px 8px -5px;
+	transition: background-color 0.3s ease;
+	box-shadow: rgb(38, 70, 83) 0px 11px 8px -5px;
   }
   .color-1 { background-color: #00898C; }
   .color-5 { background-color: #FBB03B; }
@@ -47,9 +30,11 @@ $_SESSION['s_objectid'] = $objectid;
   .color-5:hover, .color-5:active  {
     background-color: #e18e0a;  
   }
-  </style>
+  
+</style>
 
 <?php
+    session_start();
     if(!isset($_SESSION['s_authenticated']) || empty($_SESSION['s_authenticated'])){
     header("location:../index.php");
     }
@@ -77,6 +62,27 @@ $_SESSION['s_objectid'] = $objectid;
     require_once ('class.loading.div.php');
     $divLoader = new loadingDiv;
     $divLoader->loader();
+
+    $objectid = "";
+    if(isset($_GET["id"])){
+     $objectid = $_GET["id"];
+    }
+    else {
+     $objectid = $_SESSION['s_objectid'];
+    }
+    $_SESSION['s_objectid'] = $objectid;
+
+    if(isset($_SESSION['s_deviceid'])){
+     $deviceid = $_SESSION['s_deviceid'];
+    }
+    else {
+     $deviceid = "0";
+    }
+    // get pluturnover date param for sql
+    $rptdate = "";
+    if(isset($_GET["date"])){
+     $rptdate = $_GET["date"];
+    }
 
     include('database.class.php');
     $pDatabase = Database::getInstance();

@@ -1,24 +1,26 @@
 <?php
-require_once __DIR__ . '/init.php';
-checkAuth();
+    session_start();
+    if(!isset($_SESSION['s_authenticated']) || empty($_SESSION['s_authenticated'])){
+    	header("location:../index.php");
+    	//die();
+    }
 
-// Initialize variables
-$deviceid = isset($_SESSION['s_deviceid']) ? $_SESSION['s_deviceid'] : '0';
-$objectid = isset($_SESSION['s_objectid']) ? $_SESSION['s_objectid'] : '';
+    include_once 'language.php';
 
-include_once 'language.php';
+    include('database.class.php');
+    $pDatabase = Database::getInstance();
+    $pDatabase->query("set names 'utf8'");
 
-include('database.class.php');
-$pDatabase = Database::getInstance();
-$pDatabase->query("set names 'utf8'");
-
-if(isset($_GET["id"])){
- $deviceid = $_GET["id"];
-}
-$_SESSION['s_deviceid'] = $deviceid;
+    $deviceid = "";
+    if(isset($_GET["id"])){
+     $deviceid = $_GET["id"];
+    }
+    else {
+     $deviceid = $_SESSION['s_deviceid'];
+    }
+    $_SESSION['s_deviceid'] = $deviceid;
 
 ?>
-<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
@@ -27,15 +29,15 @@ $_SESSION['s_deviceid'] = $deviceid;
   <link rel="stylesheet" href="css/style.css">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="css/w3.css">
-  <style>
+          <style>
   .button {
     display: inline-block;  
     border-radius: 20px;
     font-size: 14px;
     text-align: center; 
     color: white;
-    transition: background-color 0.3s ease;
-    box-shadow: rgb(38, 70, 83) 0px 11px 8px -5px;
+	transition: background-color 0.3s ease;
+	box-shadow: rgb(38, 70, 83) 0px 11px 8px -5px;
   }
   .color-1 { background-color: #2d7fc1; }
   .color-5 { background-color: #FBB03B; }
@@ -46,7 +48,11 @@ $_SESSION['s_deviceid'] = $deviceid;
   .color-5:hover, .color-5:active  {
     background-color: #805c99;  
   }
-  </style>
+  
+</style>
+
+  <script>
+  </script>
 </head>
 
 <body>
