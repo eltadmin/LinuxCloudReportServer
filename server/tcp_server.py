@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 import random
 import string
+from . import CRYPTO_DICTIONARY
+from .crypto import DataCompressor
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,38 @@ class TCPConnection:
         self.app_version = None
         self.server_key = None
         self.key_length = None
+        self.crypto_key = None
+        self.last_error = None
+
+    def encrypt_data(self, data):
+        """Encrypts data using the crypto key"""
+        if not self.crypto_key:
+            self.last_error = "Crypto key is not negotiated"
+            return None
+            
+        compressor = DataCompressor(self.crypto_key)
+        result = compressor.compress_data(data)
+        
+        if not result:
+            self.last_error = compressor.last_error
+            return None
+            
+        return result
+        
+    def decrypt_data(self, data):
+        """Decrypts data using the crypto key"""
+        if not self.crypto_key:
+            self.last_error = "Crypto key is not negotiated"
+            return None
+            
+        compressor = DataCompressor(self.crypto_key)
+        result = compressor.decompress_data(data)
+        
+        if not result:
+            self.last_error = compressor.last_error
+            return None
+            
+        return result
 
 class TCPServer:
     def __init__(self, report_server):
@@ -130,13 +164,24 @@ class TCPServer:
                 logger.info(f"Stored client info: host={conn.client_host}, type={conn.app_type}, version={conn.app_version}")
                 
                 # Generate crypto key
+                # The key length is used to determine how many characters to take from the dictionary entry
                 key_len = random.randint(1, 12)
                 server_key = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
                 
                 # Store crypto key components
                 conn.server_key = server_key
                 conn.key_length = key_len
-                logger.info(f"Generated crypto key: server_key={server_key}, length={key_len}")
+                
+                # In the original implementation, the full crypto key combines:
+                # 1. The server_key (random 8 chars)
+                # 2. A portion of the crypto dictionary entry for the given key_id
+                # 3. First 2 chars of client host + last char of client host
+                # This is crucial for the client to correctly compute the same key
+                crypto_dict_part = CRYPTO_DICTIONARY[key_id - 1][:key_len]
+                host_part = conn.client_host[:2] + conn.client_host[-1:]
+                conn.crypto_key = server_key + crypto_dict_part + host_part
+                
+                logger.info(f"Generated crypto key: server_key={server_key}, length={key_len}, full_key={conn.crypto_key}")
                 
                 # Mark connection as authenticated
                 conn.authenticated = True
