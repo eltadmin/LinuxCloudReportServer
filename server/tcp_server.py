@@ -1,12 +1,13 @@
 import asyncio
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 import json
 import zlib
 from datetime import datetime, timedelta
 from pathlib import Path
 import random
 import string
+import traceback
 from .constants import CRYPTO_DICTIONARY
 from .crypto import DataCompressor
 
@@ -27,6 +28,8 @@ class TCPConnection:
         self.key_length = None
         self.crypto_key = None
         self.last_error = None
+        self.last_activity = datetime.now()
+        self.connection_time = datetime.now()
 
     def encrypt_data(self, data):
         """Encrypts data using the crypto key"""
@@ -58,17 +61,25 @@ class TCPConnection:
             
         return result
 
+    def update_activity(self):
+        """Update the last activity timestamp"""
+        self.last_activity = datetime.now()
+
 class TCPServer:
     def __init__(self, report_server):
         self.report_server = report_server
         self.server = None
         self.connections: Dict[str, TCPConnection] = {}
+        self.pending_connections: List[TCPConnection] = []  # Connections without client_id yet
         
     async def start(self, host: str, port: int):
         """Start TCP server."""
         self.server = await asyncio.start_server(
             self.handle_connection, host, port
         )
+        
+        # Start background task to check for inactive connections
+        asyncio.create_task(self.check_inactive_connections())
         
     async def stop(self):
         """Stop TCP server."""
@@ -78,14 +89,72 @@ class TCPServer:
             
         # Close all connections
         for conn in self.connections.values():
-            conn.writer.close()
-            await conn.writer.wait_closed()
+            try:
+                conn.writer.close()
+                await conn.writer.wait_closed()
+            except Exception as e:
+                logger.error(f"Error closing connection: {e}")
+                
+        # Close all pending connections
+        for conn in self.pending_connections:
+            try:
+                conn.writer.close()
+                await conn.writer.wait_closed()
+            except Exception as e:
+                logger.error(f"Error closing pending connection: {e}")
+                
+    async def check_inactive_connections(self):
+        """Periodically check for and remove inactive connections."""
+        while True:
+            try:
+                now = datetime.now()
+                # Check authenticated connections
+                clients_to_remove = []
+                
+                for client_id, conn in self.connections.items():
+                    # If last activity is more than 5 minutes ago, remove the connection
+                    if (now - conn.last_activity).total_seconds() > 300:
+                        logger.info(f"Removing inactive connection for client {client_id}")
+                        clients_to_remove.append(client_id)
+                        
+                for client_id in clients_to_remove:
+                    conn = self.connections.pop(client_id)
+                    try:
+                        conn.writer.close()
+                        await conn.writer.wait_closed()
+                    except Exception as e:
+                        logger.error(f"Error closing inactive connection: {e}")
+                
+                # Check pending connections (not yet authenticated with client ID)
+                pending_to_remove = []
+                for i, conn in enumerate(self.pending_connections):
+                    # If connection is older than 2 minutes and still not authenticated, remove it
+                    if (now - conn.connection_time).total_seconds() > 120:
+                        pending_to_remove.append(i)
+                
+                # Remove from highest index to lowest to avoid shifting issues
+                for i in sorted(pending_to_remove, reverse=True):
+                    try:
+                        conn = self.pending_connections.pop(i)
+                        conn.writer.close()
+                        await conn.writer.wait_closed()
+                    except Exception as e:
+                        logger.error(f"Error closing pending connection: {e}")
+                
+                await asyncio.sleep(60)  # Check every minute
+                
+            except Exception as e:
+                logger.error(f"Error in connection checker: {e}", exc_info=True)
+                await asyncio.sleep(60)  # Wait a minute and try again
             
     async def handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         """Handle new TCP connection."""
         conn = TCPConnection(reader, writer)
         peer = conn.peer
         logger.info(f"New TCP connection from {peer}")
+        
+        # Add to pending connections list until we get a client ID
+        self.pending_connections.append(conn)
         
         try:
             while True:
@@ -94,16 +163,18 @@ class TCPServer:
                 command = data.decode().strip()
                 logger.info(f"Received command from {peer}: {command}")
                 
+                # Update activity timestamp
+                conn.update_activity()
+                
                 if not command:
                     logger.warning(f"Empty command received from {peer}")
                     continue
                     
                 # Handle command
                 response = await self.handle_command(conn, command, peer)
-                logger.info(f"Sending response to {peer}: {response}")
                 
-                # Send response
                 if response:
+                    logger.info(f"Sending response to {peer}: {response}")
                     # Ensure response ends with a newline
                     if not response.endswith('\n'):
                         response += '\n'
@@ -112,22 +183,65 @@ class TCPServer:
                     
         except asyncio.IncompleteReadError:
             logger.info(f"Client {peer} disconnected")
+        except asyncio.CancelledError:
+            logger.info(f"Connection handling for {peer} was cancelled")
         except Exception as e:
             logger.error(f"Error handling client {peer}: {e}", exc_info=True)
+            logger.error(traceback.format_exc())
         finally:
             # Cleanup
-            if conn.client_id in self.connections:
+            if conn.client_id and conn.client_id in self.connections:
                 del self.connections[conn.client_id]
-            writer.close()
-            await writer.wait_closed()
+            
+            # Remove from pending connections if present
+            if conn in self.pending_connections:
+                self.pending_connections.remove(conn)
+                
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception as e:
+                logger.error(f"Error closing writer: {e}")
+            
+    def check_duplicate_client_id(self, client_id: str, current_conn: TCPConnection) -> bool:
+        """
+        Check if a client ID already exists in the connections dictionary.
+        If it exists, close the old connection and return True.
+        """
+        if client_id in self.connections:
+            old_conn = self.connections[client_id]
+            # If it's the same connection object, it's not a duplicate
+            if old_conn is current_conn:
+                return False
+                
+            logger.warning(f"Duplicate client ID detected: {client_id}. Closing old connection.")
+            
+            # Schedule closing the old connection asynchronously
+            async def close_old_connection():
+                try:
+                    old_conn.writer.close()
+                    await old_conn.writer.wait_closed()
+                except Exception as e:
+                    logger.error(f"Error closing duplicate connection: {e}")
+                    
+            asyncio.create_task(close_old_connection())
+            return True
+            
+        return False
             
     async def handle_command(self, conn: TCPConnection, command: str, peer: tuple) -> str:
         """Handle TCP command."""
-        parts = command.split(' ')
-        cmd = parts[0].upper()
-        logger.info(f"Processing command: {cmd} with parts: {parts}")
-        
         try:
+            parts = command.split(' ')
+            cmd = parts[0].upper()
+            logger.debug(f"Processing command: {cmd} with parts: {parts}")
+            
+            # Check if connection is authenticated for commands that require it
+            authenticated_commands = ['INFO', 'SRSP', 'GREQ', 'VERS', 'DWNL']
+            if cmd in authenticated_commands and not conn.authenticated:
+                logger.warning(f"Unauthenticated connection tried to use {cmd} command")
+                return 'ERROR Authentication required'
+            
             if cmd == 'INIT':
                 # Parse INIT command parameters
                 params = {}
@@ -234,7 +348,19 @@ class TCPServer:
                     return 'ERROR Decryption validation failed'
                 
                 # Store client information
-                conn.client_id = data_pairs.get('ID', '')
+                client_id = data_pairs.get('ID', '')
+                if not client_id:
+                    logger.error("Missing client ID in INFO data")
+                    return 'ERROR Missing client ID'
+                
+                conn.client_id = client_id
+                
+                # Check for duplicate client ID
+                self.check_duplicate_client_id(client_id, conn)
+                
+                # Remove from pending connections list if present
+                if conn in self.pending_connections:
+                    self.pending_connections.remove(conn)
                 
                 # Create response data
                 response_data = {
@@ -261,92 +387,178 @@ class TCPServer:
                 return f'200 OK\nDATA={encrypted_response}'
                 
             elif cmd == 'VERS':
-                # Get update file list
-                updates = []
-                for file in Path(self.report_server.update_folder).glob('*'):
-                    updates.append({
-                        'name': file.name,
-                        'size': file.stat().st_size,
-                        'modified': datetime.fromtimestamp(file.stat().st_mtime).isoformat()
-                    })
-                return json.dumps({'updates': updates})
+                # Handle version check and updates list
+                try:
+                    # Get update file list with version information
+                    updates = []
+                    update_folder = Path(self.report_server.update_folder)
+                    
+                    if not update_folder.exists():
+                        logger.warning(f"Update folder {update_folder} does not exist")
+                        return json.dumps({'updates': []})
+                    
+                    for file in update_folder.glob('*'):
+                        if file.is_file():
+                            updates.append({
+                                'name': file.name,
+                                'size': file.stat().st_size,
+                                'modified': datetime.fromtimestamp(file.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+                            })
+                    
+                    if conn.crypto_key:
+                        # If we have a crypto key, encrypt the response
+                        response_text = json.dumps({'updates': updates})
+                        encrypted_response = conn.encrypt_data(response_text)
+                        if not encrypted_response:
+                            logger.error(f"Failed to encrypt VERS response: {conn.last_error}")
+                            return f'ERROR Failed to encrypt VERS response: {conn.last_error}'
+                        return f'200 OK\nDATA={encrypted_response}'
+                    else:
+                        # Plain response if no crypto key
+                        return json.dumps({'updates': updates})
+                        
+                except Exception as e:
+                    logger.error(f"Error handling VERS command: {e}", exc_info=True)
+                    return f'ERROR Failed to get updates list: {str(e)}'
                 
             elif cmd == 'DWNL':
-                # Download update file
-                if len(parts) < 2:
-                    return 'ERROR Invalid DWNL command'
+                # Handle download of update files
+                try:
+                    if len(parts) < 2:
+                        return 'ERROR Missing filename parameter'
+                        
+                    filename = parts[1]
+                    file_path = Path(self.report_server.update_folder) / filename
                     
-                filename = parts[1]
-                file_path = Path(self.report_server.update_folder) / filename
-                
-                if not file_path.exists():
-                    return 'ERROR File not found'
+                    if not file_path.exists() or not file_path.is_file():
+                        logger.error(f"Requested file not found: {filename}")
+                        return 'ERROR File not found'
                     
-                # Read and compress file
-                with open(file_path, 'rb') as f:
-                    data = f.read()
-                compressed = zlib.compress(data)
-                
-                # Send file size and data
-                conn.writer.write(str(len(compressed)).encode() + b'\n')
-                await conn.writer.drain()
-                
-                conn.writer.write(compressed)
-                await conn.writer.drain()
-                return None
+                    # Read file and prepare for sending
+                    with open(file_path, 'rb') as f:
+                        file_data = f.read()
+                    
+                    # Compress data with zlib
+                    compressed_data = zlib.compress(file_data)
+                    file_size = len(compressed_data)
+                    
+                    # First send OK response with file size
+                    response = f'200 OK\r\nSIZE={file_size}\r\n\r\n'
+                    conn.writer.write(response.encode())
+                    await conn.writer.drain()
+                    
+                    # Then send the file data
+                    conn.writer.write(compressed_data)
+                    await conn.writer.drain()
+                    
+                    logger.info(f"Sent file {filename} ({file_size} bytes compressed) to {peer}")
+                    return None  # We've already sent the response directly
+                    
+                except Exception as e:
+                    logger.error(f"Error handling DWNL command: {e}", exc_info=True)
+                    return f'ERROR Failed to download file: {str(e)}'
                 
             elif cmd == 'GREQ':
-                # Generate report
-                if len(parts) < 3:
-                    return 'ERROR Invalid GREQ command'
+                # Handle report generation requests
+                try:
+                    # Check for required parameters
+                    if len(parts) < 2:
+                        return 'ERROR Missing report type parameter'
                     
-                report_type = parts[1]
-                params = json.loads(' '.join(parts[2:]))
-                
-                # Generate report using database
-                result = await self.report_server.db.generate_report(report_type, params)
-                return json.dumps(result)
+                    report_type = parts[1]
+                    params = {}
+                    
+                    # Parse parameters
+                    if len(parts) > 2:
+                        if parts[2].startswith('DATA='):
+                            encrypted_data = parts[2][5:]  # Remove DATA= prefix
+                            
+                            # Decrypt data if crypto key is available
+                            if conn.crypto_key:
+                                decrypted_data = conn.decrypt_data(encrypted_data)
+                                if not decrypted_data:
+                                    logger.error(f"Failed to decrypt GREQ data: {conn.last_error}")
+                                    return f'ERROR Failed to decrypt parameters: {conn.last_error}'
+                                
+                                try:
+                                    params = json.loads(decrypted_data)
+                                except json.JSONDecodeError:
+                                    logger.error("Invalid JSON in decrypted GREQ data")
+                                    return 'ERROR Invalid JSON parameters'
+                            else:
+                                try:
+                                    params = json.loads(encrypted_data)
+                                except json.JSONDecodeError:
+                                    logger.error("Invalid JSON in GREQ data")
+                                    return 'ERROR Invalid JSON parameters'
+                    
+                    # Generate report
+                    report_result = await self.report_server.db.generate_report(report_type, params)
+                    
+                    # Convert result to JSON
+                    result_json = json.dumps(report_result)
+                    
+                    # Encrypt response if crypto key is available
+                    if conn.crypto_key:
+                        encrypted_response = conn.encrypt_data(result_json)
+                        if not encrypted_response:
+                            logger.error(f"Failed to encrypt GREQ response: {conn.last_error}")
+                            return f'ERROR Failed to encrypt response: {conn.last_error}'
+                        return f'200 OK\nDATA={encrypted_response}'
+                    else:
+                        return f'200 OK\n{result_json}'
+                        
+                except Exception as e:
+                    logger.error(f"Error handling GREQ command: {e}", exc_info=True)
+                    return f'ERROR Failed to generate report: {str(e)}'
                 
             elif cmd == 'SRSP':
-                # Handle client response to a server request
-                # Extract command counter and data from parameters
-                cmd_counter = None
-                data = None
-                
-                for part in parts[1:]:
-                    if part.startswith('CMD='):
-                        cmd_counter = part[4:]
-                    elif part.startswith('DATA='):
-                        data = part[5:]
-                
-                if not cmd_counter:
-                    logger.error("Missing CMD parameter in SRSP")
-                    return 'ERROR Missing CMD parameter'
-                
-                if not data:
-                    logger.error("Missing DATA parameter in SRSP")
-                    return 'ERROR Missing DATA parameter'
-                
-                # Check if crypto key is negotiated
-                if not conn.crypto_key:
-                    logger.error("Crypto key is not negotiated")
-                    return 'ERROR Crypto key is not negotiated'
-                
-                # Decrypt the data
-                decrypted = conn.decrypt_data(data)
-                if not decrypted:
-                    logger.error(f"Failed to decrypt SRSP data: {conn.last_error}")
-                    return f'ERROR Failed to decrypt SRSP data: {conn.last_error}'
-                
-                # Store the response for the matching request
-                # In a real implementation, you would use this to match a request with its response
-                logger.info(f"Received response for command {cmd_counter}: {decrypted}")
-                
-                return '200 OK'
+                # Handle client response to server requests
+                try:
+                    # Parse parameters
+                    cmd_counter = None
+                    data = None
+                    
+                    for param in parts[1:]:
+                        if param.startswith('CMD='):
+                            cmd_counter = param[4:]
+                        elif param.startswith('DATA='):
+                            data = param[5:]
+                    
+                    if not cmd_counter:
+                        logger.error("Missing CMD parameter in SRSP")
+                        return 'ERROR Missing CMD parameter'
+                    
+                    if not data:
+                        logger.error("Missing DATA parameter in SRSP")
+                        return 'ERROR Missing DATA parameter'
+                    
+                    # Decrypt data if crypto key is available
+                    decrypted_data = None
+                    if conn.crypto_key:
+                        decrypted_data = conn.decrypt_data(data)
+                        if not decrypted_data:
+                            logger.error(f"Failed to decrypt SRSP data: {conn.last_error}")
+                            return f'ERROR Failed to decrypt data: {conn.last_error}'
+                    else:
+                        decrypted_data = data
+                    
+                    # Process the response data (in a real implementation, you would match this with a pending request)
+                    logger.info(f"Received response for command {cmd_counter} from client {conn.client_id}")
+                    logger.debug(f"Response data: {decrypted_data}")
+                    
+                    # Handle different response types based on command_counter if needed
+                    # Here we're just acknowledging receipt
+                    return '200 OK'
+                    
+                except Exception as e:
+                    logger.error(f"Error handling SRSP command: {e}", exc_info=True)
+                    return f'ERROR Failed to process response: {str(e)}'
                 
             else:
+                logger.warning(f"Unknown command received: {cmd}")
                 return f'ERROR Unknown command: {cmd}'
                 
         except Exception as e:
-            logger.error(f"Command error: {e}", exc_info=True)
-            return f'ERROR Internal server error' 
+            logger.error(f"Unhandled error in handle_command: {e}", exc_info=True)
+            return f'ERROR Internal server error: {str(e)}' 
