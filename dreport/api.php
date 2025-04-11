@@ -1,7 +1,7 @@
 <?php
 
 require_once 'protected/restDbHandler.php';
-require 'protected/slim/Slim.php';
+require 'protected/Slim/Slim.php';
 
 
 \Slim\Slim::registerAutoloader();
