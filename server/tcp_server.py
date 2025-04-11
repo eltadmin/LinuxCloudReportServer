@@ -174,12 +174,13 @@ class TCPServer:
                 response = await self.handle_command(conn, command, peer)
                 
                 if response:
-                    # For INIT command, handle the raw bytes response directly
+                    # For INIT command, we need exact byte-level handling
                     if command.startswith('INIT'):
-                        # Log raw bytes response in a human-readable way
-                        log_response = str(response).replace('\\r\\n', ' | ')
-                        logger.info(f"Sending INIT response (bytes) to {peer}: {log_response}")
-                        # Send raw bytes directly - no encoding needed
+                        # Display raw hex bytes for debugging
+                        hex_response = ' '.join([f'{b:02x}' for b in response])
+                        logger.info(f"INIT raw response bytes: {hex_response}")
+                        
+                        # Send exactly as is without any modifications
                         writer.write(response)
                     else:
                         # For other commands
@@ -319,23 +320,23 @@ class TCPServer:
                 conn.authenticated = True
                 logger.info(f"Connection authenticated for client {peer}")
                 
-                # CRITICAL FIX: The Delphi TStrings.Values parser expects a very specific format
-                # The format for TStrings.Values collection is:
-                # - Each line has a name-value pair separated by an equals sign
-                # - The value part is everything after the first equals sign
-                # - Newlines are used to separate each pair
-                # - Whitespace is significant
+                # FINAL FIX: For Delphi TStrings.Values compatibility
+                # The absolute exact format needed by Delphi for Text.Values to work:
+                # 1. Status code on first line
+                # 2. Each key=value pair exactly at start of line
+                # 3. CRLF line endings (crucial for Windows)
                 
-                # For INIT command, construct a response that's 100% compatible with TStrings.Values
-                response = b"200 OK\r\n"
-                # This is the critical format that Delphi expects:
-                # Note that LEN and KEY are at the beginning of lines with no spaces
+                # We're sending the raw bytes with the exact format
+                status_line = b"200 OK\r\n"
+                
+                # LEN and KEY must be at the start of lines - this is critical!
+                # The exact byte sequence that Delphi is expecting:
+                response = status_line
                 response += b"LEN=" + str(key_len).encode('ascii') + b"\r\n"
                 response += b"KEY=" + server_key.encode('ascii') + b"\r\n"
-                # End with a blank line
-                response += b"\r\n"
+                response += b"\r\n"  # Blank line at the end
                 
-                logger.info(f"Created Delphi-compatible INIT response: status=200, LEN={key_len}, KEY={server_key}")
+                logger.info(f"INIT response (exact format): status=200, LEN={key_len}, KEY={server_key}")
                 return response
                 
             elif cmd == 'ERRL':
