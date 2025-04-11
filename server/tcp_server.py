@@ -319,28 +319,24 @@ class TCPServer:
                 conn.authenticated = True
                 logger.info(f"Connection authenticated for client {peer}")
                 
-                # CRITICAL FIX: Create INIT response with exact byte-by-byte format
-                # The Delphi client has very specific expectations for the format:
-                # - Status code on first line with CRLF
-                # - Each parameter (LEN, KEY) on its own line with CRLF
-                # - An extra CRLF at the end
-                # - No spaces between parameter name, = sign, and value
+                # CRITICAL FIX: The Delphi TStrings.Values parser expects a very specific format
+                # The format for TStrings.Values collection is:
+                # - Each line has a name-value pair separated by an equals sign
+                # - The value part is everything after the first equals sign
+                # - Newlines are used to separate each pair
+                # - Whitespace is significant
                 
-                # Build the response as raw bytes to ensure exact formatting
-                # First line: status code
-                response_bytes = b"200 OK\r\n"
-                # Second line: LEN parameter
-                response_bytes += f"LEN={key_len}\r\n".encode('ascii')
-                # Third line: KEY parameter
-                response_bytes += f"KEY={server_key}\r\n".encode('ascii')
-                # Final empty line
-                response_bytes += b"\r\n"
+                # For INIT command, construct a response that's 100% compatible with TStrings.Values
+                response = b"200 OK\r\n"
+                # This is the critical format that Delphi expects:
+                # Note that LEN and KEY are at the beginning of lines with no spaces
+                response += b"LEN=" + str(key_len).encode('ascii') + b"\r\n"
+                response += b"KEY=" + server_key.encode('ascii') + b"\r\n"
+                # End with a blank line
+                response += b"\r\n"
                 
-                # This raw byte-based approach ensures the exact format
-                # expected by the Delphi TIdCommand parsing mechanism
-                
-                logger.info(f"Created INIT response with raw bytes: status=200 OK, LEN={key_len}, KEY={server_key}")
-                return response_bytes
+                logger.info(f"Created Delphi-compatible INIT response: status=200, LEN={key_len}, KEY={server_key}")
+                return response
                 
             elif cmd == 'ERRL':
                 # Handle error logging from client
