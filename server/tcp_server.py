@@ -5,6 +5,8 @@ import json
 import zlib
 from datetime import datetime
 from pathlib import Path
+import random
+import string
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +18,11 @@ class TCPConnection:
         self.authenticated = False
         self.peer = writer.get_extra_info('peername')
         self.last_ping = datetime.now()
+        self.client_host = None
+        self.app_type = None
+        self.app_version = None
+        self.server_key = None
+        self.key_length = None
 
 class TCPServer:
     def __init__(self, report_server):
@@ -81,24 +88,45 @@ class TCPServer:
         
         try:
             if cmd == 'INIT':
-                # Initialize connection with client ID
-                if len(parts) < 2:
-                    return 'ERROR Invalid INIT command'
-                    
-                client_id = parts[1]
+                # Parse INIT command parameters
+                params = {}
+                for param in parts[1:]:
+                    if '=' in param:
+                        key, value = param.split('=', 1)
+                        params[key.upper()] = value
                 
-                # Verify client
-                if not await self.report_server.verify_client_auth(client_id):
-                    return 'ERROR Authentication failed'
-                    
-                # Check for duplicate client ID
-                if client_id in self.connections:
-                    return 'ERROR Client ID already connected'
-                    
-                conn.client_id = client_id
-                conn.authenticated = True
-                self.connections[client_id] = conn
-                return 'OK'
+                # Validate required parameters
+                required_params = ['ID', 'DT', 'TM', 'HST', 'ATP', 'AVR']
+                for param in required_params:
+                    if param not in params:
+                        return f'ERROR Missing required parameter: {param}'
+                
+                # Validate key ID
+                try:
+                    key_id = int(params['ID'])
+                    if not 1 <= key_id <= 10:
+                        return 'ERROR Invalid key ID. Must be between 1 and 10'
+                except ValueError:
+                    return 'ERROR Invalid key ID format'
+                
+                # Store client info
+                conn.client_host = params['HST']
+                conn.app_type = params['ATP']
+                conn.app_version = params['AVR']
+                
+                # Generate crypto key
+                # Generate random length between 1 and 12
+                key_len = random.randint(1, 12)
+                
+                # Generate server key (8 random characters)
+                server_key = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+                
+                # Store crypto key components
+                conn.server_key = server_key
+                conn.key_length = key_len
+                
+                # Return response with server key and length
+                return f'200 OK\nKEY={server_key}\nLEN={key_len}'
                 
             elif not conn.authenticated:
                 return 'ERROR Not authenticated'

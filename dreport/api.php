@@ -1,4 +1,16 @@
 <?php
+// Enable error reporting
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+// Debug logging
+error_log("Script started");
+error_log("REQUEST_URI: " . $_SERVER['REQUEST_URI']);
+error_log("QUERY_STRING: " . $_SERVER['QUERY_STRING']);
+error_log("REQUEST_METHOD: " . $_SERVER['REQUEST_METHOD']);
+error_log("Remote IP: " . $_SERVER['REMOTE_ADDR']);
+error_log("X-Forwarded-For: " . (isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? $_SERVER['HTTP_X_FORWARDED_FOR'] : 'not set'));
+error_log("HTTP_X_FORWARDED_FOR: " . (isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? $_SERVER['HTTP_X_FORWARDED_FOR'] : 'not set'));
 
 require_once 'protected/restDbHandler.php';
 require 'protected/Slim/Slim.php';
@@ -6,24 +18,31 @@ require 'protected/Slim/Slim.php';
 
 \Slim\Slim::registerAutoloader();
 
-$app = new \Slim\Slim();
+$app = new \Slim\Slim(array(
+    'debug' => true
+));
 $app->contentType('text/html; charset=utf-8');
 
 /**
  * Function to authenticate rest calls - IP whitelist
  */
 function authenticate(\Slim\Route $route) {
-
+    error_log("Authenticate function called");
+    
     $app = \Slim\Slim::getInstance();
-
+    
     $db = new DbHandler();
     $whitelist = $db->getIPwhitelist();
+    error_log("Whitelist: " . print_r($whitelist, true));
+    
     $clientip = get_ip();
-    //$headers = apache_request_headers();
+    error_log("Client IP: " . $clientip);
+    
     $GLOBALS['clientip'] = $clientip;
 
     // Verifying ip
-     if (!in_array($clientip, $whitelist)) {
+    if (!in_array($clientip, $whitelist)) {
+        error_log("IP not in whitelist: " . $clientip);
         // IP is missing in list
         $response = array();
         $response["result"] = 1;
@@ -32,32 +51,14 @@ function authenticate(\Slim\Route $route) {
         $db->logevent(OPER_ERROR,$clientip,'rest authentication failed: IP='.$clientip.' RESP:'.$response["result"].':'.$response["message"]);
         $app->stop();
     }
+    error_log("Authentication successful for IP: " . $clientip);
 }
 
 /**
  * Function to get client IP, in IPv4 or IPv6 format
  */
 function get_ip() {
-    //Just get the headers if we can or else use the SERVER global
-    if ( function_exists( 'apache_request_headers' ) ) {
-        $headers = apache_request_headers();
-    } else {
-        $headers = $_SERVER;
-    }
-    //Get the forwarded IP if it exists
-    if ( array_key_exists( 'X-Forwarded-For', $headers ) && filter_var( $headers['X-Forwarded-For'], FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 ) ) {
-        $the_ip = $headers['X-Forwarded-For'];
-    } elseif ( array_key_exists( 'HTTP_X_FORWARDED_FOR', $headers ) && filter_var( $headers['HTTP_X_FORWARDED_FOR'], FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 )
-    ) {
-        $the_ip = $headers['HTTP_X_FORWARDED_FOR'];
-    } else {
-
-        $the_ip = filter_var( $_SERVER['REMOTE_ADDR'], FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 );
-        if  (!$the_ip) {
-         $the_ip = filter_var( $_SERVER['REMOTE_ADDR'], FILTER_VALIDATE_IP, FILTER_FLAG_IPV6);
-        }
-    }
-    return $the_ip;
+    return $_SERVER['REMOTE_ADDR'];
 }
 
 
