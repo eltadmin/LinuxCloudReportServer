@@ -178,7 +178,8 @@ class TCPServer:
                     # The client expects CRLF line endings and specific formatting
                     if command.startswith('INIT'):
                         # Log only the content, not the actual format to avoid confusion with line endings
-                        logger.info(f"Sending INIT response to {peer}: {response.replace('\r\n', ' | ')}")
+                        log_response = response.replace("\r\n", " | ")
+                        logger.info(f"Sending INIT response to {peer}: {log_response}")
                         # Send the exact response with proper CRLF line endings
                         writer.write(response.encode())
                     else:
