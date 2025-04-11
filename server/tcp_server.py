@@ -3,7 +3,7 @@ import logging
 from typing import Dict, Optional
 import json
 import zlib
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import random
 import string
@@ -202,6 +202,64 @@ class TCPServer:
                 conn.last_ping = datetime.now()
                 return 'PONG'
                 
+            elif cmd == 'INFO':
+                # Handle client ID initialization
+                # Check if crypto key is negotiated
+                if not conn.crypto_key:
+                    logger.error("Crypto key is not negotiated")
+                    return 'ERROR Crypto key is not negotiated'
+                
+                # Get encrypted data from client
+                if len(parts) < 2 or not parts[1].startswith('DATA='):
+                    return 'ERROR Missing DATA parameter'
+                
+                encrypted_data = parts[1][5:]  # Remove DATA= prefix
+                
+                # Decrypt data
+                decrypted_data = conn.decrypt_data(encrypted_data)
+                if not decrypted_data:
+                    logger.error(f"Failed to decrypt data: {conn.last_error}")
+                    return f'ERROR Failed to decrypt data: {conn.last_error}'
+                
+                # Parse data as key-value pairs
+                data_pairs = {}
+                for line in decrypted_data.splitlines():
+                    if '=' in line:
+                        key, value = line.split('=', 1)
+                        data_pairs[key] = value
+                
+                # Validate data
+                if 'ТТ' not in data_pairs or data_pairs['ТТ'] != 'Test':
+                    logger.error("Decryption problem - validation failed")
+                    return 'ERROR Decryption validation failed'
+                
+                # Store client information
+                conn.client_id = data_pairs.get('ID', '')
+                
+                # Create response data
+                response_data = {
+                    'ID': conn.client_id,
+                    'EX': (datetime.now() + timedelta(days=365)).strftime('%y%m%d'),
+                    'EN': 'True',
+                    'CD': datetime.now().strftime('%y%m%d'),
+                    'CT': datetime.now().strftime('%H%M%S')
+                }
+                
+                # Convert response to string
+                response_text = '\n'.join([f"{k}={v}" for k, v in response_data.items()])
+                
+                # Encrypt response
+                encrypted_response = conn.encrypt_data(response_text)
+                if not encrypted_response:
+                    logger.error(f"Failed to encrypt response: {conn.last_error}")
+                    return f'ERROR Failed to encrypt response: {conn.last_error}'
+                
+                # Save connection in connections dictionary
+                self.connections[conn.client_id] = conn
+                
+                # Return response
+                return f'200 OK\nDATA={encrypted_response}'
+                
             elif cmd == 'VERS':
                 # Get update file list
                 updates = []
@@ -248,6 +306,43 @@ class TCPServer:
                 # Generate report using database
                 result = await self.report_server.db.generate_report(report_type, params)
                 return json.dumps(result)
+                
+            elif cmd == 'SRSP':
+                # Handle client response to a server request
+                # Extract command counter and data from parameters
+                cmd_counter = None
+                data = None
+                
+                for part in parts[1:]:
+                    if part.startswith('CMD='):
+                        cmd_counter = part[4:]
+                    elif part.startswith('DATA='):
+                        data = part[5:]
+                
+                if not cmd_counter:
+                    logger.error("Missing CMD parameter in SRSP")
+                    return 'ERROR Missing CMD parameter'
+                
+                if not data:
+                    logger.error("Missing DATA parameter in SRSP")
+                    return 'ERROR Missing DATA parameter'
+                
+                # Check if crypto key is negotiated
+                if not conn.crypto_key:
+                    logger.error("Crypto key is not negotiated")
+                    return 'ERROR Crypto key is not negotiated'
+                
+                # Decrypt the data
+                decrypted = conn.decrypt_data(data)
+                if not decrypted:
+                    logger.error(f"Failed to decrypt SRSP data: {conn.last_error}")
+                    return f'ERROR Failed to decrypt SRSP data: {conn.last_error}'
+                
+                # Store the response for the matching request
+                # In a real implementation, you would use this to match a request with its response
+                logger.info(f"Received response for command {cmd_counter}: {decrypted}")
+                
+                return '200 OK'
                 
             else:
                 return f'ERROR Unknown command: {cmd}'
