@@ -138,6 +138,10 @@ class TCPServer:
                 conn.key_length = key_len
                 logger.info(f"Generated crypto key: server_key={server_key}, length={key_len}")
                 
+                # Mark connection as authenticated
+                conn.authenticated = True
+                logger.info(f"Connection authenticated for client {peer}")
+                
                 # Return response with server key and length
                 response = f'200 OK\nKEY={server_key}\nLEN={key_len}'
                 logger.info(f"Sending INIT response: {response}")
