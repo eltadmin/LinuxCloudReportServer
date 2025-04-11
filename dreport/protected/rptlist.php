@@ -1,11 +1,5 @@
 <?php
-define('DREPORT_INIT', true);
 require_once __DIR__ . '/init.php';
-
-// Initialize session
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
 checkAuth();
 
 // Initialize variables

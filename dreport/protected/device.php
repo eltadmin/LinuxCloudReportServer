@@ -1,11 +1,5 @@
 <?php
-define('DREPORT_INIT', true);
 require_once __DIR__ . '/init.php';
-
-// Initialize session if not already started
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
 checkAuth();
 
 // Initialize variables
@@ -24,6 +18,7 @@ if(isset($_GET["id"])){
 $_SESSION['s_deviceid'] = $deviceid;
 
 ?>
+<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
@@ -32,15 +27,15 @@ $_SESSION['s_deviceid'] = $deviceid;
   <link rel="stylesheet" href="css/style.css">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="css/w3.css">
-          <style>
+  <style>
   .button {
     display: inline-block;  
     border-radius: 20px;
     font-size: 14px;
     text-align: center; 
     color: white;
-	transition: background-color 0.3s ease;
-	box-shadow: rgb(38, 70, 83) 0px 11px 8px -5px;
+    transition: background-color 0.3s ease;
+    box-shadow: rgb(38, 70, 83) 0px 11px 8px -5px;
   }
   .color-1 { background-color: #2d7fc1; }
   .color-5 { background-color: #FBB03B; }
@@ -51,11 +46,7 @@ $_SESSION['s_deviceid'] = $deviceid;
   .color-5:hover, .color-5:active  {
     background-color: #805c99;  
   }
-  
-</style>
-
-  <script>
-  </script>
+  </style>
 </head>
 
 <body>
