@@ -177,17 +177,18 @@ class TCPServer:
                     # For INIT command, we need to preserve the exact format for the client
                     # The client expects CRLF line endings and specific formatting
                     if command.startswith('INIT'):
-                        # Log only the content, not the actual format to avoid confusion with line endings
+                        # Log response content (replace CRLF with | for logging clarity)
                         log_response = response.replace("\r\n", " | ")
                         logger.info(f"Sending INIT response to {peer}: {log_response}")
-                        # Send the exact response with proper CRLF line endings
-                        writer.write(response.encode())
+                        
+                        # Send the raw bytes directly to ensure exact CRLF line endings
+                        writer.write(response.encode('utf-8'))
                     else:
                         logger.info(f"Sending response to {peer}: {response}")
                         # For other commands, ensure response ends with a newline
                         if not response.endswith('\n'):
                             response += '\n'
-                        writer.write(response.encode())
+                        writer.write(response.encode('utf-8'))
                     
                     await writer.drain()
                     
@@ -311,16 +312,20 @@ class TCPServer:
                 conn.authenticated = True
                 logger.info(f"Connection authenticated for client {peer}")
                 
-                # Return response with server key and length - in the exact format expected by Delphi client
-                # The format must use CRLF for line endings and the last line must be empty
-                # The critical format is:
-                # 200 OK\r\n
-                # LEN=n\r\n 
-                # KEY=xxxx\r\n
-                # \r\n
-                response = f"200 OK\r\nLEN={key_len}\r\nKEY={server_key}\r\n\r\n"
-                # Don't log the raw response with control characters to avoid confusion
-                logger.info(f"Created INIT response with: status=200, LEN={key_len}, KEY={server_key}")
+                # Create INIT response with exact format for Delphi client
+                # Format must be:
+                # - Status code and message on first line
+                # - Each parameter on its own line
+                # - Exactly one empty line at the end
+                # - CRLF line endings (not just LF)
+                status_line = "200 OK"
+                len_line = f"LEN={key_len}"
+                key_line = f"KEY={server_key}"
+                
+                # Create response with proper CRLF line endings
+                response = f"{status_line}\r\n{len_line}\r\n{key_line}\r\n\r\n"
+                
+                logger.info(f"Created INIT response: status={status_line}, {len_line}, {key_line}")
                 return response
                 
             elif cmd == 'ERRL':
