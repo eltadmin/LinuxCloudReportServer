@@ -174,21 +174,28 @@ class TCPServer:
                 response = await self.handle_command(conn, command, peer)
                 
                 if response:
-                    # For INIT command, we need to preserve the exact format for the client
-                    # The client expects CRLF line endings and specific formatting
+                    # For INIT command, handle the raw bytes response directly
                     if command.startswith('INIT'):
-                        # Log response content (replace CRLF with | for logging clarity)
-                        log_response = response.replace("\r\n", " | ")
-                        logger.info(f"Sending INIT response to {peer}: {log_response}")
-                        
-                        # Send the raw bytes directly to ensure exact CRLF line endings
-                        writer.write(response.encode('utf-8'))
+                        # Log raw bytes response in a human-readable way
+                        log_response = str(response).replace('\\r\\n', ' | ')
+                        logger.info(f"Sending INIT response (bytes) to {peer}: {log_response}")
+                        # Send raw bytes directly - no encoding needed
+                        writer.write(response)
                     else:
-                        logger.info(f"Sending response to {peer}: {response}")
-                        # For other commands, ensure response ends with a newline
-                        if not response.endswith('\n'):
-                            response += '\n'
-                        writer.write(response.encode('utf-8'))
+                        # For other commands
+                        if isinstance(response, str):
+                            # Backward compatibility for string responses
+                            logger.info(f"Sending response (string) to {peer}: {response}")
+                            if not response.endswith('\n'):
+                                response += '\n'
+                            writer.write(response.encode('utf-8'))
+                        else:
+                            # Bytes response
+                            log_response = response.decode('utf-8', errors='replace')
+                            logger.info(f"Sending response (bytes) to {peer}: {log_response}")
+                            if not response.endswith(b'\n'):
+                                response += b'\n'
+                            writer.write(response)
                     
                     await writer.drain()
                     
@@ -240,7 +247,7 @@ class TCPServer:
             
         return False
             
-    async def handle_command(self, conn: TCPConnection, command: str, peer: tuple) -> str:
+    async def handle_command(self, conn: TCPConnection, command: str, peer: tuple) -> bytes:
         """Handle TCP command."""
         try:
             parts = command.split(' ')
@@ -251,7 +258,7 @@ class TCPServer:
             authenticated_commands = ['INFO', 'SRSP', 'GREQ', 'VERS', 'DWNL']
             if cmd in authenticated_commands and not conn.authenticated:
                 logger.warning(f"Unauthenticated connection tried to use {cmd} command")
-                return 'ERROR Authentication required'
+                return b'ERROR Authentication required'
             
             if cmd == 'INIT':
                 # Parse INIT command parameters
@@ -268,7 +275,7 @@ class TCPServer:
                     if param not in params:
                         error_msg = f'ERROR Missing required parameter: {param}'
                         logger.error(f"INIT validation failed: {error_msg}")
-                        return error_msg
+                        return error_msg.encode('utf-8')
                 
                 # Validate key ID
                 try:
@@ -276,11 +283,11 @@ class TCPServer:
                     if not 1 <= key_id <= 10:
                         error_msg = 'ERROR Invalid key ID. Must be between 1 and 10'
                         logger.error(f"INIT validation failed: {error_msg}")
-                        return error_msg
+                        return error_msg.encode('utf-8')
                 except ValueError:
                     error_msg = 'ERROR Invalid key ID format'
                     logger.error(f"INIT validation failed: {error_msg}")
-                    return error_msg
+                    return error_msg.encode('utf-8')
                 
                 # Store client info
                 conn.client_host = params['HST']
@@ -312,42 +319,49 @@ class TCPServer:
                 conn.authenticated = True
                 logger.info(f"Connection authenticated for client {peer}")
                 
-                # Create INIT response with exact format for Delphi client
-                # Format must be:
-                # - Status code and message on first line
-                # - Each parameter on its own line
-                # - Exactly one empty line at the end
-                # - CRLF line endings (not just LF)
-                status_line = "200 OK"
-                len_line = f"LEN={key_len}"
-                key_line = f"KEY={server_key}"
+                # CRITICAL FIX: Create INIT response with exact byte-by-byte format
+                # The Delphi client has very specific expectations for the format:
+                # - Status code on first line with CRLF
+                # - Each parameter (LEN, KEY) on its own line with CRLF
+                # - An extra CRLF at the end
+                # - No spaces between parameter name, = sign, and value
                 
-                # Create response with proper CRLF line endings
-                response = f"{status_line}\r\n{len_line}\r\n{key_line}\r\n\r\n"
+                # Build the response as raw bytes to ensure exact formatting
+                # First line: status code
+                response_bytes = b"200 OK\r\n"
+                # Second line: LEN parameter
+                response_bytes += f"LEN={key_len}\r\n".encode('ascii')
+                # Third line: KEY parameter
+                response_bytes += f"KEY={server_key}\r\n".encode('ascii')
+                # Final empty line
+                response_bytes += b"\r\n"
                 
-                logger.info(f"Created INIT response: status={status_line}, {len_line}, {key_line}")
-                return response
+                # This raw byte-based approach ensures the exact format
+                # expected by the Delphi TIdCommand parsing mechanism
+                
+                logger.info(f"Created INIT response with raw bytes: status=200 OK, LEN={key_len}, KEY={server_key}")
+                return response_bytes
                 
             elif cmd == 'ERRL':
                 # Handle error logging from client
                 error_msg = ' '.join(parts[1:])
                 logger.error(f"Client error: {error_msg}")
-                return 'OK'
+                return b'OK'
                 
             elif cmd == 'PING':
                 conn.last_ping = datetime.now()
-                return 'PONG'
+                return b'PONG'
                 
             elif cmd == 'INFO':
                 # Handle client ID initialization
                 # Check if crypto key is negotiated
                 if not conn.crypto_key:
                     logger.error("Crypto key is not negotiated")
-                    return 'ERROR Crypto key is not negotiated'
+                    return b'ERROR Crypto key is not negotiated'
                 
                 # Get encrypted data from client
                 if len(parts) < 2 or not parts[1].startswith('DATA='):
-                    return 'ERROR Missing DATA parameter'
+                    return b'ERROR Missing DATA parameter'
                 
                 encrypted_data = parts[1][5:]  # Remove DATA= prefix
                 
@@ -355,7 +369,7 @@ class TCPServer:
                 decrypted_data = conn.decrypt_data(encrypted_data)
                 if not decrypted_data:
                     logger.error(f"Failed to decrypt data: {conn.last_error}")
-                    return f'ERROR Failed to decrypt data: {conn.last_error}'
+                    return f'ERROR Failed to decrypt data: {conn.last_error}'.encode('utf-8')
                 
                 # Parse data as key-value pairs
                 data_pairs = {}
@@ -367,13 +381,13 @@ class TCPServer:
                 # Validate data
                 if 'ТТ' not in data_pairs or data_pairs['ТТ'] != 'Test':
                     logger.error("Decryption problem - validation failed")
-                    return 'ERROR Decryption validation failed'
+                    return b'ERROR Decryption validation failed'
                 
                 # Store client information
                 client_id = data_pairs.get('ID', '')
                 if not client_id:
                     logger.error("Missing client ID in INFO data")
-                    return 'ERROR Missing client ID'
+                    return b'ERROR Missing client ID'
                 
                 conn.client_id = client_id
                 
@@ -400,13 +414,13 @@ class TCPServer:
                 encrypted_response = conn.encrypt_data(response_text)
                 if not encrypted_response:
                     logger.error(f"Failed to encrypt response: {conn.last_error}")
-                    return f'ERROR Failed to encrypt response: {conn.last_error}'
+                    return f'ERROR Failed to encrypt response: {conn.last_error}'.encode('utf-8')
                 
                 # Save connection in connections dictionary
                 self.connections[conn.client_id] = conn
                 
                 # Return response
-                return f'200 OK\nDATA={encrypted_response}'
+                return f'200 OK\nDATA={encrypted_response}'.encode('utf-8')
                 
             elif cmd == 'VERS':
                 # Handle version check and updates list
@@ -417,7 +431,7 @@ class TCPServer:
                     
                     if not update_folder.exists():
                         logger.warning(f"Update folder {update_folder} does not exist")
-                        return json.dumps({'updates': []})
+                        return json.dumps({'updates': []}).encode('utf-8')
                     
                     for file in update_folder.glob('*'):
                         if file.is_file():
@@ -433,28 +447,28 @@ class TCPServer:
                         encrypted_response = conn.encrypt_data(response_text)
                         if not encrypted_response:
                             logger.error(f"Failed to encrypt VERS response: {conn.last_error}")
-                            return f'ERROR Failed to encrypt VERS response: {conn.last_error}'
-                        return f'200 OK\nDATA={encrypted_response}'
+                            return f'ERROR Failed to encrypt VERS response: {conn.last_error}'.encode('utf-8')
+                        return f'200 OK\nDATA={encrypted_response}'.encode('utf-8')
                     else:
                         # Plain response if no crypto key
-                        return json.dumps({'updates': updates})
+                        return json.dumps({'updates': updates}).encode('utf-8')
                         
                 except Exception as e:
                     logger.error(f"Error handling VERS command: {e}", exc_info=True)
-                    return f'ERROR Failed to get updates list: {str(e)}'
+                    return f'ERROR Failed to get updates list: {str(e)}'.encode('utf-8')
                 
             elif cmd == 'DWNL':
                 # Handle download of update files
                 try:
                     if len(parts) < 2:
-                        return 'ERROR Missing filename parameter'
+                        return b'ERROR Missing filename parameter'
                         
                     filename = parts[1]
                     file_path = Path(self.report_server.update_folder) / filename
                     
                     if not file_path.exists() or not file_path.is_file():
                         logger.error(f"Requested file not found: {filename}")
-                        return 'ERROR File not found'
+                        return b'ERROR File not found'
                     
                     # Read file and prepare for sending
                     with open(file_path, 'rb') as f:
@@ -465,9 +479,9 @@ class TCPServer:
                     file_size = len(compressed_data)
                     
                     # First send OK response with file size
-                    response = f'200 OK\r\nSIZE={file_size}\r\n\r\n'
+                    response = f'200 OK\r\nSIZE={file_size}\r\n\r\n'.encode()
                     logger.info(f"Sending DWNL response header: status=200, SIZE={file_size}")
-                    conn.writer.write(response.encode())
+                    conn.writer.write(response)
                     await conn.writer.drain()
                     
                     # Then send the file data
@@ -476,18 +490,18 @@ class TCPServer:
                     await conn.writer.drain()
                     
                     logger.info(f"Sent file {filename} ({file_size} bytes compressed) to {peer}")
-                    return None  # We've already sent the response directly
+                    return b''  # We've already sent the response directly
                     
                 except Exception as e:
                     logger.error(f"Error handling DWNL command: {e}", exc_info=True)
-                    return f'ERROR Failed to download file: {str(e)}'
+                    return f'ERROR Failed to download file: {str(e)}'.encode('utf-8')
                 
             elif cmd == 'GREQ':
                 # Handle report generation requests
                 try:
                     # Check for required parameters
                     if len(parts) < 2:
-                        return 'ERROR Missing report type parameter'
+                        return b'ERROR Missing report type parameter'
                     
                     report_type = parts[1]
                     params = {}
@@ -502,19 +516,19 @@ class TCPServer:
                                 decrypted_data = conn.decrypt_data(encrypted_data)
                                 if not decrypted_data:
                                     logger.error(f"Failed to decrypt GREQ data: {conn.last_error}")
-                                    return f'ERROR Failed to decrypt parameters: {conn.last_error}'
+                                    return f'ERROR Failed to decrypt parameters: {conn.last_error}'.encode('utf-8')
                                 
                                 try:
                                     params = json.loads(decrypted_data)
                                 except json.JSONDecodeError:
                                     logger.error("Invalid JSON in decrypted GREQ data")
-                                    return 'ERROR Invalid JSON parameters'
+                                    return b'ERROR Invalid JSON parameters'
                             else:
                                 try:
                                     params = json.loads(encrypted_data)
                                 except json.JSONDecodeError:
                                     logger.error("Invalid JSON in GREQ data")
-                                    return 'ERROR Invalid JSON parameters'
+                                    return b'ERROR Invalid JSON parameters'
                     
                     # Generate report
                     report_result = await self.report_server.db.generate_report(report_type, params)
@@ -527,14 +541,14 @@ class TCPServer:
                         encrypted_response = conn.encrypt_data(result_json)
                         if not encrypted_response:
                             logger.error(f"Failed to encrypt GREQ response: {conn.last_error}")
-                            return f'ERROR Failed to encrypt response: {conn.last_error}'
-                        return f'200 OK\nDATA={encrypted_response}'
+                            return f'ERROR Failed to encrypt response: {conn.last_error}'.encode('utf-8')
+                        return f'200 OK\nDATA={encrypted_response}'.encode('utf-8')
                     else:
-                        return f'200 OK\n{result_json}'
+                        return f'200 OK\n{result_json}'.encode('utf-8')
                         
                 except Exception as e:
                     logger.error(f"Error handling GREQ command: {e}", exc_info=True)
-                    return f'ERROR Failed to generate report: {str(e)}'
+                    return f'ERROR Failed to generate report: {str(e)}'.encode('utf-8')
                 
             elif cmd == 'SRSP':
                 # Handle client response to server requests
@@ -551,11 +565,11 @@ class TCPServer:
                     
                     if not cmd_counter:
                         logger.error("Missing CMD parameter in SRSP")
-                        return 'ERROR Missing CMD parameter'
+                        return b'ERROR Missing CMD parameter'
                     
                     if not data:
                         logger.error("Missing DATA parameter in SRSP")
-                        return 'ERROR Missing DATA parameter'
+                        return b'ERROR Missing DATA parameter'
                     
                     # Decrypt data if crypto key is available
                     decrypted_data = None
@@ -563,7 +577,7 @@ class TCPServer:
                         decrypted_data = conn.decrypt_data(data)
                         if not decrypted_data:
                             logger.error(f"Failed to decrypt SRSP data: {conn.last_error}")
-                            return f'ERROR Failed to decrypt data: {conn.last_error}'
+                            return f'ERROR Failed to decrypt data: {conn.last_error}'.encode('utf-8')
                     else:
                         decrypted_data = data
                     
@@ -573,16 +587,16 @@ class TCPServer:
                     
                     # Handle different response types based on command_counter if needed
                     # Here we're just acknowledging receipt
-                    return '200 OK'
+                    return b'200 OK'
                     
                 except Exception as e:
                     logger.error(f"Error handling SRSP command: {e}", exc_info=True)
-                    return f'ERROR Failed to process response: {str(e)}'
+                    return f'ERROR Failed to process response: {str(e)}'.encode('utf-8')
                 
             else:
                 logger.warning(f"Unknown command received: {cmd}")
-                return f'ERROR Unknown command: {cmd}'
+                return f'ERROR Unknown command: {cmd}'.encode('utf-8')
                 
         except Exception as e:
             logger.error(f"Unhandled error in handle_command: {e}", exc_info=True)
-            return f'ERROR Internal server error: {str(e)}' 
+            return f'ERROR Internal server error: {str(e)}'.encode('utf-8') 
