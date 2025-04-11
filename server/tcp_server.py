@@ -58,12 +58,15 @@ class TCPServer:
                 # Read command
                 data = await reader.readuntil(b'\n')
                 command = data.decode().strip()
+                logger.info(f"Received command from {peer}: {command}")
                 
                 if not command:
+                    logger.warning(f"Empty command received from {peer}")
                     continue
                     
                 # Handle command
                 response = await self.handle_command(conn, command)
+                logger.info(f"Sending response to {peer}: {response}")
                 
                 # Send response
                 if response:
@@ -85,6 +88,7 @@ class TCPServer:
         """Handle TCP command."""
         parts = command.split(' ')
         cmd = parts[0].upper()
+        logger.info(f"Processing command: {cmd} with parts: {parts}")
         
         try:
             if cmd == 'INIT':
@@ -94,39 +98,47 @@ class TCPServer:
                     if '=' in param:
                         key, value = param.split('=', 1)
                         params[key.upper()] = value
+                logger.info(f"Parsed INIT parameters: {params}")
                 
                 # Validate required parameters
                 required_params = ['ID', 'DT', 'TM', 'HST', 'ATP', 'AVR']
                 for param in required_params:
                     if param not in params:
-                        return f'ERROR Missing required parameter: {param}'
+                        error_msg = f'ERROR Missing required parameter: {param}'
+                        logger.error(f"INIT validation failed: {error_msg}")
+                        return error_msg
                 
                 # Validate key ID
                 try:
                     key_id = int(params['ID'])
                     if not 1 <= key_id <= 10:
-                        return 'ERROR Invalid key ID. Must be between 1 and 10'
+                        error_msg = 'ERROR Invalid key ID. Must be between 1 and 10'
+                        logger.error(f"INIT validation failed: {error_msg}")
+                        return error_msg
                 except ValueError:
-                    return 'ERROR Invalid key ID format'
+                    error_msg = 'ERROR Invalid key ID format'
+                    logger.error(f"INIT validation failed: {error_msg}")
+                    return error_msg
                 
                 # Store client info
                 conn.client_host = params['HST']
                 conn.app_type = params['ATP']
                 conn.app_version = params['AVR']
+                logger.info(f"Stored client info: host={conn.client_host}, type={conn.app_type}, version={conn.app_version}")
                 
                 # Generate crypto key
-                # Generate random length between 1 and 12
                 key_len = random.randint(1, 12)
-                
-                # Generate server key (8 random characters)
                 server_key = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
                 
                 # Store crypto key components
                 conn.server_key = server_key
                 conn.key_length = key_len
+                logger.info(f"Generated crypto key: server_key={server_key}, length={key_len}")
                 
                 # Return response with server key and length
-                return f'200 OK\nKEY={server_key}\nLEN={key_len}'
+                response = f'200 OK\nKEY={server_key}\nLEN={key_len}'
+                logger.info(f"Sending INIT response: {response}")
+                return response
                 
             elif not conn.authenticated:
                 return 'ERROR Not authenticated'
