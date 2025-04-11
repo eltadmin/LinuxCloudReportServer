@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import aiohttp
 import zlib
 from pathlib import Path
+import os
 from .tcp_server import TCPServer
 from .http_server import HTTPServer
 from .db import Database
@@ -29,8 +30,8 @@ class ReportServer:
         self.tcp_interface = config.get(f'{self.section}TCP', 'TCP_IPInterface', fallback='0.0.0.0')
         self.tcp_port = config.getint(f'{self.section}TCP', 'TCP_Port', fallback=8016)
         
-        # Auth settings
-        self.auth_server_url = config.get(f'{self.section}AUTHSERVER', 'REST_URL')
+        # Auth settings - prioritize environment variable over INI file
+        self.auth_server_url = os.getenv('AUTH_SERVER_URL') or config.get(f'{self.section}AUTHSERVER', 'REST_URL')
         
         # HTTP logins
         self.http_logins = dict(config.items(f'{self.section}HTTPLOGINS'))
