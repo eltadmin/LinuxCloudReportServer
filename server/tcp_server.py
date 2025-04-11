@@ -174,18 +174,20 @@ class TCPServer:
                 response = await self.handle_command(conn, command, peer)
                 
                 if response:
-                    logger.info(f"Sending response to {peer}: {response}")
-                    
-                    # For INIT command response, we need to preserve exact format
-                    # Don't add an extra newline as the response already has proper formatting
+                    # For INIT command, we need to preserve the exact format for the client
+                    # The client expects CRLF line endings and specific formatting
                     if command.startswith('INIT'):
+                        # Log only the content, not the actual format to avoid confusion with line endings
+                        logger.info(f"Sending INIT response to {peer}: {response.replace('\r\n', ' | ')}")
+                        # Send the exact response with proper CRLF line endings
                         writer.write(response.encode())
                     else:
+                        logger.info(f"Sending response to {peer}: {response}")
                         # For other commands, ensure response ends with a newline
                         if not response.endswith('\n'):
                             response += '\n'
                         writer.write(response.encode())
-                        
+                    
                     await writer.drain()
                     
         except asyncio.IncompleteReadError:
@@ -310,8 +312,14 @@ class TCPServer:
                 
                 # Return response with server key and length - in the exact format expected by Delphi client
                 # The format must use CRLF for line endings and the last line must be empty
+                # The critical format is:
+                # 200 OK\r\n
+                # LEN=n\r\n 
+                # KEY=xxxx\r\n
+                # \r\n
                 response = f"200 OK\r\nLEN={key_len}\r\nKEY={server_key}\r\n\r\n"
-                logger.info(f"Sending INIT response: 200 OK\\r\\nLEN={key_len}\\r\\nKEY={server_key}\\r\\n\\r\\n")
+                # Don't log the raw response with control characters to avoid confusion
+                logger.info(f"Created INIT response with: status=200, LEN={key_len}, KEY={server_key}")
                 return response
                 
             elif cmd == 'ERRL':
@@ -452,10 +460,12 @@ class TCPServer:
                     
                     # First send OK response with file size
                     response = f'200 OK\r\nSIZE={file_size}\r\n\r\n'
+                    logger.info(f"Sending DWNL response header: status=200, SIZE={file_size}")
                     conn.writer.write(response.encode())
                     await conn.writer.drain()
                     
                     # Then send the file data
+                    logger.info(f"Sending file data: {filename} ({file_size} bytes compressed)")
                     conn.writer.write(compressed_data)
                     await conn.writer.drain()
                     
