@@ -408,25 +408,27 @@ class TCPServer:
                 logger.info(f"Host parts: original='{orig_host_part}', cleaned='{host_part}'")
                 
                 # Construct the crypto key:
-                # server_key + dict_part + host_part
-                conn.crypto_key = server_key + crypto_dict_part + host_part
+                # server_key + dict_part + host_part - използваме оригиналната част с тирето за Delphi клиента
+                conn.crypto_key = server_key + crypto_dict_part + orig_host_part
                 
                 # Създаваме алтернативни ключове за тестване, в случай че не работи
                 alt_keys = [
-                    server_key + crypto_dict_part + host_part,  # Оригиналният (без тире)
-                    server_key + crypto_dict_part + orig_host_part,  # С тирето, ако има такова
+                    server_key + crypto_dict_part + orig_host_part,  # Оригиналният (с тирето)
+                    server_key + crypto_dict_part + host_part,  # Без тире в края на host частта
                     server_key + crypto_dict_part,  # Без host_part
-                    server_key + dict_entry[:key_len] + host_part,  # С различен dict_part
+                    server_key + dict_entry[:key_len] + orig_host_part,  # С различен dict_part и оригинален host
                     # Тествай различни формати на host_part
                     server_key + crypto_dict_part + conn.client_host[:2],  # Само първите 2 знака
                     server_key + crypto_dict_part + conn.client_host[-1:],  # Само последния знак
                     # Тествай различен ред на компонентите
-                    crypto_dict_part + server_key + host_part,
+                    crypto_dict_part + server_key + orig_host_part,
                     # Тествай с нормализиране на клиентския хост (заменяне на тирета, премахване и т.н.)
                     server_key + crypto_dict_part + conn.client_host.replace('-', ''),  # Без тирета
                     server_key + crypto_dict_part + conn.client_host.replace('-', ' ').strip()[:2] + conn.client_host.replace('-', ' ').strip()[-1:],  # Чисти пространства
                     # Често срещан проблем с последния символ
-                    server_key + crypto_dict_part + host_first_chars  # Само първите 2 знака, без последен
+                    server_key + crypto_dict_part + host_first_chars,  # Само първите 2 знака, без последен
+                    # Опитай и с NE (само първите 2 букви, често срещана грешка)
+                    server_key + crypto_dict_part + "NE"
                 ]
                 
                 conn.alt_crypto_keys = alt_keys
@@ -438,12 +440,24 @@ class TCPServer:
                     logger.info(f"  Alt key {i+1}: {alt_key}")
                 
                 # Test the original key first
-                conn.crypto_key = server_key + crypto_dict_part + host_part
+                conn.crypto_key = server_key + crypto_dict_part + orig_host_part
                 
                 # Get the first key piece to verify that all is well
                 try:
                     logger.info(f"Testing crypto key: '{conn.crypto_key}' (length: {len(conn.crypto_key)})")
-                    logger.info(f"Server key: '{server_key}', dict_part: '{crypto_dict_part}', host_part: '{host_part}'")
+                    logger.info(f"Server key: '{server_key}', dict_part: '{crypto_dict_part}', host_part: '{orig_host_part}'")
+                    
+                    # Тестваме с няколко различни тестови стринга
+                    test_strings = ["test", "TT=Test", "ID=123"]
+                    for test_str in test_strings:
+                        enc_test = conn.encrypt_data(test_str)
+                        dec_test = conn.decrypt_data(enc_test)
+                        if dec_test != test_str:
+                            logger.error(f"Crypto test failed for '{test_str}': '{dec_test}' != '{test_str}'")
+                        else:
+                            logger.info(f"Crypto test passed for '{test_str}'")
+                    
+                    # Проверяваме поне един стринг
                     enc_test = conn.encrypt_data("test")
                     dec_test = conn.decrypt_data(enc_test)
                     if dec_test != "test":
@@ -507,6 +521,14 @@ class TCPServer:
                     logger.error("Анализ: Проблем с форматирането на INIT отговора или неправилен криптиращ ключ.")
                     logger.error(f"INIT параметри: ID={conn.client_id}, host={conn.client_host}")
                     logger.error(f"Изпратен ключ: {conn.server_key}, дължина: {conn.key_length}")
+                    
+                    # Подробна информация за последния работещ тест на криптирането
+                    logger.error(f"Последен успешен тест на криптирането със сървърски ключ: {conn.crypto_key}")
+                    try:
+                        test_result = conn.test_encryption()
+                        logger.error(f"Тест на криптирането: {test_result}")
+                    except Exception as e:
+                        logger.error(f"Грешка при тестване на криптирането: {e}")
                     
                     # Покажи всички компоненти на ключа за дебъг
                     if conn.client_host:
