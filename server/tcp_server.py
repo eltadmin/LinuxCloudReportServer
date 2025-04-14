@@ -273,7 +273,7 @@ class TCPServer:
                 logger.info(f"Parsed INIT parameters: {params}")
                 
                 # Validate required parameters
-                required_params = ['ID', 'DT', 'TM', 'HST', 'ATP', 'AVR']
+                required_params = ['ID', 'DT', 'TM', 'HST']  # Removing ATP and AVR from required parameters
                 for param in required_params:
                     if param not in params:
                         error_msg = f'ERROR Missing required parameter: {param}'
@@ -294,8 +294,8 @@ class TCPServer:
                 
                 # Store client info
                 conn.client_host = params['HST']
-                conn.app_type = params['ATP']
-                conn.app_version = params['AVR']
+                conn.app_type = params.get('ATP', 'UnknownApp')  # Default value if ATP is missing
+                conn.app_version = params.get('AVR', '1.0.0.0')  # Default value if AVR is missing
                 logger.info(f"Stored client info: host={conn.client_host}, type={conn.app_type}, version={conn.app_version}")
                 
                 # Generate crypto key
