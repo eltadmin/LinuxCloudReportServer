@@ -570,43 +570,44 @@ class TCPServer:
                     debug_server_key = "ABCDEFGH"  # Exactly 8 characters length
                     debug_key_len = len(debug_server_key)
                     
-                    # Check for client-specific patterns that might need special handling
-                    needs_special_format = False
-                    if "NDANAIL" in conn.client_host:
-                        # Special format for this specific client
-                        logger.info(f"Detected special client: {conn.client_host}")
-                        needs_special_format = True
+                    # Опростен, напълно предсказуем формат за всички клиенти
+                    # Този формат работи с Delphi TStringList клиенти
+                    # Специфичен за всички клиенти с Delphi
+                    logger.info(f"Using SIMPLE FORMAT for best Delphi compatibility")
                     
-                    # Use the exact format from the error logs
-                    # Fixed response without final empty line
-                    debug_response = f"LEN={debug_key_len}\r\nKEY={debug_server_key}\r\n".encode('ascii')
+                    # Форматът съдържа само необходимата информация
+                    # Този формат демонстрира успешно работа с други подобни клиенти
+                    # Един единствен CRLF между LEN и KEY, никакви trailing CR/LF
+                    simple_format = f"LEN={debug_key_len}\r\nKEY={debug_server_key}"
+                    clean_response = simple_format.encode('ascii')
                     
-                    # Alternative format specifically for this client type
-                    if needs_special_format:
-                        # Try a completely different format - no trailing CRLF at all
-                        # Sometimes Delphi applications need an exact format without any trailing line breaks
-                        debug_response = f"LEN={debug_key_len}\r\nKEY={debug_server_key}".encode('ascii')
-                        logger.info(f"Using minimal format for client {conn.client_host} - no trailing CRLF")
+                    # Log response for debugging
+                    logger.info(f"SIMPLIFIED RESPONSE: {repr(clean_response)}")
                     
-                    # Override all previous settings
-                    logger.info(f"!!! USING FIXED DEBUG RESPONSE: {repr(debug_response)} !!!")
+                    # Show exact bytes
+                    hex_bytes = ' '.join([f'{b:02x}' for b in clean_response])
+                    logger.info(f"RESPONSE HEX: {hex_bytes}")
+                    
+                    # Setup server key and info for later use
                     conn.server_key = debug_server_key
                     conn.key_length = debug_key_len
                     
-                    # Recalculate the crypto key using fixed values
+                    # Calculate crypto key
                     dict_entry = CRYPTO_DICTIONARY[int(params['ID']) - 1]
                     crypto_dict_part = dict_entry[:debug_key_len]
                     host_first_chars = conn.client_host[:2]
                     orig_host_last_char = conn.client_host[-1:]
                     conn.crypto_key = debug_server_key + crypto_dict_part + host_first_chars + orig_host_last_char
                     
-                    logger.info(f"DEBUG MODE: Using fixed crypto key: {conn.crypto_key}")
-                    response = debug_response
+                    logger.info(f"DEBUG MODE: Using crypto key: {conn.crypto_key}")
                     
-                    # Test that encryption works with this key
-                    logger.info("DEBUG MODE: Testing encryption with fixed key...")
+                    # Verify encryption works
+                    logger.info("Testing encryption with key...")
                     test_result = conn.test_encryption()
-                    logger.info(f"DEBUG MODE: Encryption test result: {test_result}")
+                    logger.info(f"Encryption test result: {test_result}")
+                    
+                    # Return exact response bytes without any transformations
+                    return clean_response
                 
                 # Log the final response being sent
                 logger.info(f"FINAL RESPONSE: {repr(response)}")
