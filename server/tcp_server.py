@@ -261,6 +261,13 @@ class TCPServer:
                             # Log exact response content for debugging
                             logger.debug(f"INIT response string representation: {response!r}")
                             
+                            # Ensure proper line endings before writing
+                            # Normalize all line endings to CRLF
+                            response = response.replace(b'\n', b'\r\n').replace(b'\r\r\n', b'\r\n')
+                            
+                            # Double check the final response
+                            logger.info(f"Final normalized response: {repr(response)}")
+                            
                             # We're already handling line endings in our response generation,
                             # so we shouldn't replace newlines again
                             writer.write(response)
@@ -389,7 +396,10 @@ class TCPServer:
                 # Generate crypto key
                 # Use fixed length of 8 for better compatibility
                 key_len = 8  # Fixed length for reliability
-                server_key = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+                server_key = ''.join(random.choices(string.ascii_letters + string.digits, k=key_len))
+                
+                # Make absolutely sure that the key length matches
+                key_len = len(server_key)
                 
                 # Store crypto key components
                 conn.server_key = server_key
@@ -490,48 +500,24 @@ class TCPServer:
                 conn.authenticated = True
                 logger.info(f"Connection authenticated with key: {conn.crypto_key} for client {peer}")
                 
-                # TESTING: Try with completely fixed hardcoded response to test
-                USE_HARDCODED_RESPONSE = True
-                
-                if USE_HARDCODED_RESPONSE:
-                    # Option 1: Exactly matching the original format from the logs with LEN first
-                    hardcoded_response1 = f"LEN={key_len}\r\nKEY={server_key}\r\n".encode('ascii')
-                    logger.info(f"OPTION 1 - STANDARD CRLF: {repr(hardcoded_response1)}")
-                    
-                    # Option 2: Completely plain format with no line endings
-                    hardcoded_response2 = f"LEN={key_len} KEY={server_key}".encode('ascii')
-                    logger.info(f"OPTION 2 - PLAIN NO BREAKS: {repr(hardcoded_response2)}")
-                    
-                    # Option 3: Ultra minimal - just the key with no labels
-                    hardcoded_response3 = f"{server_key}".encode('ascii')
-                    logger.info(f"OPTION 3 - JUST KEY VALUE: {repr(hardcoded_response3)}")
-                    
-                    # Option 4: Binary format with length prefix (Pascal string style)
-                    key_bytes = server_key.encode('ascii')
-                    key_len_bytes = len(key_bytes).to_bytes(4, byteorder='little')
-                    hardcoded_response4 = key_len_bytes + key_bytes
-                    logger.info(f"OPTION 4 - BINARY FORMAT: {repr(hardcoded_response4)}")
-                    
-                    # Option 5: Just the KEY parameter with no LEN
-                    hardcoded_response5 = f"KEY={server_key}".encode('ascii')
-                    logger.info(f"OPTION 5 - JUST KEY PARAM: {repr(hardcoded_response5)}")
-                    
-                    # Choose which option to use
-                    OPTION_TO_USE = 5  # Change this to 1-5
-                    
-                    hardcoded_options = {
-                        1: hardcoded_response1,
-                        2: hardcoded_response2,
-                        3: hardcoded_response3,
-                        4: hardcoded_response4,
-                        5: hardcoded_response5
-                    }
-                    response = hardcoded_options[OPTION_TO_USE]
-                    logger.info(f"USING OPTION {OPTION_TO_USE}: {repr(response)}")
+                # Use a fixed format response - reverting to original format
+                # Simplify back to a known working format
+                simple_response = f"LEN={key_len}\r\nKEY={server_key}\r\n".encode('ascii')
+                logger.info(f"Using standard format: {repr(simple_response)}")
+                response = simple_response
                 
                 # Log the final response being sent
                 logger.info(f"FINAL RESPONSE: {repr(response)}")
                 logger.info(f"RESPONSE (ASCII): {response.decode('ascii', 'replace')}")
+                
+                # Explicitly log the exact bytes with escape codes
+                ascii_bytes = []
+                for b in response:
+                    if 32 <= b <= 126:  # printable ASCII
+                        ascii_bytes.append(chr(b))
+                    else:
+                        ascii_bytes.append(f"\\x{b:02x}")
+                logger.info(f"EXACT RESPONSE BYTES: {''.join(ascii_bytes)}")
                 
                 # Log detailed bytes info
                 def log_bytes_detail(data, msg=''):
