@@ -307,8 +307,9 @@ class TCPServer:
                 conn.server_key = server_key
                 conn.key_length = key_len
                 
-                # Use full dictionary entry instead of truncating
-                crypto_dict_part = CRYPTO_DICTIONARY[key_id - 1]  # Changed from [:key_len]
+                # IMPORTANT: Use only a portion of the dictionary entry based on key_len
+                # This is critical for compatibility with the Delphi client
+                crypto_dict_part = CRYPTO_DICTIONARY[key_id - 1][:key_len]  # Use only first key_len characters
                 host_part = conn.client_host[:2] + conn.client_host[-1:]
                 conn.crypto_key = server_key + crypto_dict_part + host_part
                 
