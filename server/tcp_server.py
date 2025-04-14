@@ -477,14 +477,14 @@ class TCPServer:
                 except Exception as e:
                     logger.error(f"Error during crypto validation: {e}")
                 
-                # Конструираме отговор в точния формат, който Delphi TStringList очаква
-                # Just key=value pairs on separate lines, without any status code
+                # Конструираме отговор формат "200 OK" с параметрите след него
                 response_lines = [
+                    "200 OK",
                     f"LEN={key_len}",
                     f"KEY={server_key}",
                     ""  # Empty line at end
                 ]
-                response_text = "\r\n".join(response_lines) + "\r\n"
+                response_text = "\r\n".join(response_lines)
                 response = response_text.encode('ascii')
                 
                 # Логваме отговора
@@ -495,10 +495,28 @@ class TCPServer:
                 logger.info(f"INIT response repr: {repr(response)}")
                 
                 # Try with a fixed string format that matches Delphi's TStringList output for testing
-                if False:  # TEMP FIX: Disable this after testing if it works
-                    hardcoded_response = f"LEN={key_len}\r\nKEY={server_key}\r\n\r\n".encode('ascii')
-                    logger.info(f"Using hardcoded format for debugging: {repr(hardcoded_response)}")
-                    logger.info(f"Hardcoded hex: {hardcoded_response.hex()}")
+                if True:  # TEMP FIX: Enable during testing
+                    # Build the response byte by byte for exact control
+                    hardcoded_bytes = bytearray()
+                    
+                    # Status line
+                    hardcoded_bytes.extend(b'200 OK')
+                    hardcoded_bytes.extend(b'\r\n')
+                    
+                    # LEN parameter
+                    hardcoded_bytes.extend(f'LEN={key_len}'.encode('ascii'))
+                    hardcoded_bytes.extend(b'\r\n')
+                    
+                    # KEY parameter
+                    hardcoded_bytes.extend(f'KEY={server_key}'.encode('ascii'))
+                    hardcoded_bytes.extend(b'\r\n')
+                    
+                    # Final empty line
+                    hardcoded_bytes.extend(b'\r\n')
+                    
+                    hardcoded_response = bytes(hardcoded_bytes)
+                    logger.info(f"Using byte-by-byte format for debugging: {repr(hardcoded_response)}")
+                    logger.info(f"Byte-by-byte hex: {hardcoded_response.hex()}")
                     response = hardcoded_response
                 
                 # Връщаме отговора
@@ -512,10 +530,18 @@ class TCPServer:
                     chars = []
                     for i, b in enumerate(data):
                         if 32 <= b <= 126:  # Printable ASCII
-                            chars.append(f"{chr(b)}({b:02x})")
+                            chars.append(f"{i}:{chr(b)}({b:02x})")
                         else:
-                            chars.append(f"\\x{b:02x}")
+                            chars.append(f"{i}:\\x{b:02x}")
                     logger.info(f"{msg} Detailed bytes: {' '.join(chars)}")
+                    
+                    # Also log as hex dump for easier viewing
+                    hex_lines = []
+                    for i in range(0, len(data), 16):
+                        hex_line = data[i:i+16].hex(' ')
+                        ascii_line = ''.join(chr(b) if 32 <= b <= 126 else '.' for b in data[i:i+16])
+                        hex_lines.append(f"{i:04x}: {hex_line:<48} | {ascii_line}")
+                    logger.info(f"{msg} Hex dump:\n" + '\n'.join(hex_lines))
                 
                 log_bytes_detail(response, "INIT RESPONSE")
                 
@@ -555,11 +581,12 @@ class TCPServer:
                     
                     # Build a suggested fixed response for clients with this error
                     response_lines = [
+                        "200 OK",
                         f"LEN={conn.key_length}",
                         f"KEY={conn.server_key}",
                         ""  # Empty line at end
                     ]
-                    suggested_response = "\r\n".join(response_lines) + "\r\n"
+                    suggested_response = "\r\n".join(response_lines)
                     logger.error(f"Suggested corrected response format: '{suggested_response}'")
                     
                     # Подробна информация за последния работещ тест на криптирането
@@ -597,7 +624,7 @@ class TCPServer:
                         logger.error(f"  host chars: {host_chars}")
                         
                     # Покажи INIT отговора за дебъг
-                    logger.error(f"INIT отговор формат: 'LEN={conn.key_length}\\r\\nKEY={conn.server_key}\\r\\n\\r\\n'")
+                    logger.error(f"INIT отговор формат: '200 OK\\r\\nLEN={conn.key_length}\\r\\nKEY={conn.server_key}\\r\\n\\r\\n'")
                 
                 return b'OK'
                 
