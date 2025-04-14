@@ -506,6 +506,49 @@ class TCPServer:
                 logger.info(f"Using standard format: {repr(simple_response)}")
                 response = simple_response
                 
+                # FIXED DEBUG RESPONSE - Special mode for testing
+                # This is a complete, exact replacement of the normal negotiation flow
+                USE_FIXED_DEBUG_RESPONSE = True
+                
+                if USE_FIXED_DEBUG_RESPONSE:
+                    # Instead of generating a random key, use a fixed key
+                    debug_server_key = "TESTKEY1"
+                    debug_key_len = len(debug_server_key)
+                    
+                    # Choose a response format mode
+                    DEBUG_MODE = 3  # Try different values 1-3
+                    
+                    if DEBUG_MODE == 1:
+                        # Standard format
+                        debug_response = f"LEN={debug_key_len}\r\nKEY={debug_server_key}\r\n".encode('ascii')
+                    elif DEBUG_MODE == 2:
+                        # Null-terminated standard format (for C-style string parsing)
+                        debug_response = f"LEN={debug_key_len}\r\nKEY={debug_server_key}\r\n\0".encode('ascii')
+                    elif DEBUG_MODE == 3:
+                        # Simple fixed-length key response with no formatting (direct binary mode)
+                        # Some clients might read bytes directly rather than parsing text
+                        debug_response = debug_server_key.encode('ascii')
+                    
+                    # Override all previous settings
+                    logger.info(f"!!! USING FIXED DEBUG RESPONSE MODE {DEBUG_MODE}: {repr(debug_response)} !!!")
+                    conn.server_key = debug_server_key
+                    conn.key_length = debug_key_len
+                    
+                    # Recalculate the crypto key using fixed values
+                    dict_entry = CRYPTO_DICTIONARY[int(params['ID']) - 1]
+                    crypto_dict_part = dict_entry[:debug_key_len]
+                    host_first_chars = conn.client_host[:2]
+                    orig_host_last_char = conn.client_host[-1:]
+                    conn.crypto_key = debug_server_key + crypto_dict_part + host_first_chars + orig_host_last_char
+                    
+                    logger.info(f"DEBUG MODE: Using fixed crypto key: {conn.crypto_key}")
+                    response = debug_response
+                    
+                    # Test that encryption works with this key
+                    logger.info("DEBUG MODE: Testing encryption with fixed key...")
+                    test_result = conn.test_encryption()
+                    logger.info(f"DEBUG MODE: Encryption test result: {test_result}")
+                
                 # Log the final response being sent
                 logger.info(f"FINAL RESPONSE: {repr(response)}")
                 logger.info(f"RESPONSE (ASCII): {response.decode('ascii', 'replace')}")
