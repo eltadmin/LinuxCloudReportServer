@@ -477,9 +477,8 @@ class TCPServer:
                 except Exception as e:
                     logger.error(f"Error during crypto validation: {e}")
                 
-                # Конструираме отговор формат "200 OK" с параметрите след него
+                # Конструираме отговор формат без статус линия
                 response_lines = [
-                    "200 OK",
                     f"LEN={key_len}",
                     f"KEY={server_key}",
                     ""  # Empty line at end
@@ -496,14 +495,10 @@ class TCPServer:
                 
                 # Try with a fixed string format that matches Delphi's TStringList output for testing
                 if True:  # TEMP FIX: Enable during testing
-                    # Build the response byte by byte for exact control
+                    # Build the response byte by byte for exact control WITHOUT status line
                     hardcoded_bytes = bytearray()
                     
-                    # Status line
-                    hardcoded_bytes.extend(b'200 OK')
-                    hardcoded_bytes.extend(b'\r\n')
-                    
-                    # LEN parameter
+                    # LEN parameter - first, without the status line
                     hardcoded_bytes.extend(f'LEN={key_len}'.encode('ascii'))
                     hardcoded_bytes.extend(b'\r\n')
                     
@@ -515,8 +510,8 @@ class TCPServer:
                     hardcoded_bytes.extend(b'\r\n')
                     
                     hardcoded_response = bytes(hardcoded_bytes)
-                    logger.info(f"Using byte-by-byte format for debugging: {repr(hardcoded_response)}")
-                    logger.info(f"Byte-by-byte hex: {hardcoded_response.hex()}")
+                    logger.info(f"Using simplified format without status line: {repr(hardcoded_response)}")
+                    logger.info(f"Simplified hex: {hardcoded_response.hex()}")
                     response = hardcoded_response
                 
                 # Връщаме отговора
@@ -581,7 +576,6 @@ class TCPServer:
                     
                     # Build a suggested fixed response for clients with this error
                     response_lines = [
-                        "200 OK",
                         f"LEN={conn.key_length}",
                         f"KEY={conn.server_key}",
                         ""  # Empty line at end
@@ -624,7 +618,7 @@ class TCPServer:
                         logger.error(f"  host chars: {host_chars}")
                         
                     # Покажи INIT отговора за дебъг
-                    logger.error(f"INIT отговор формат: '200 OK\\r\\nLEN={conn.key_length}\\r\\nKEY={conn.server_key}\\r\\n\\r\\n'")
+                    logger.error(f"INIT отговор формат: 'LEN={conn.key_length}\\r\\nKEY={conn.server_key}\\r\\n\\r\\n'")
                 
                 return b'OK'
                 
