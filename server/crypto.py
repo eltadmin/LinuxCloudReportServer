@@ -23,11 +23,37 @@ class DataCompressor:
             padded_key = crypto_key + '123456'
             logger.debug(f"Key too short, padded to: '{padded_key}'")
             self.crypto_key = padded_key
+        
+        # Save the original key for debugging
+        self.original_key = self.crypto_key
             
         # Hash the key to get a consistent length for AES (exactly matching Delphi's DCP implementation)
-        key_hash = hashlib.md5(self.crypto_key.encode('latin1')).digest()
-        self.aes_key = key_hash
-        logger.debug(f"Prepared AES key (MD5 hash): {key_hash.hex()}")
+        # Use cp1251 encoding which is most compatible with Delphi's Windows-1251 for Cyrillic
+        try:
+            encodings = ['cp1251', 'latin1', 'utf-8']
+            key_bytes = None
+            
+            for encoding in encodings:
+                try:
+                    key_bytes = self.crypto_key.encode(encoding)
+                    logger.debug(f"Key encoded successfully with {encoding}")
+                    break
+                except UnicodeEncodeError:
+                    continue
+            
+            if key_bytes is None:
+                logger.warning("All encodings failed for key, using utf-8 with 'replace'")
+                key_bytes = self.crypto_key.encode('utf-8', errors='replace')
+                
+            key_hash = hashlib.md5(key_bytes).digest()
+            self.aes_key = key_hash
+            logger.debug(f"Prepared AES key (MD5 hash): {key_hash.hex()}")
+            
+        except Exception as e:
+            logger.error(f"Error preparing key: {e}")
+            # Fallback - direct MD5 of string representation if all else fails
+            self.aes_key = hashlib.md5(str(self.crypto_key).encode('utf-8', errors='replace')).digest()
+            logger.warning(f"Using fallback key generation: {self.aes_key.hex()}")
         
         # Create a fixed IV of zeros to match Delphi's behavior
         self.iv = b'\x00' * 16
@@ -41,15 +67,48 @@ class DataCompressor:
         padding_needed = block_size - (len(data) % block_size)
         return data + (b'\x00' * padding_needed)
         
+    def _try_multiple_encodings(self, text):
+        """Try multiple encodings to convert text to bytes, starting with the most compatible with Delphi"""
+        encodings = ['cp1251', 'latin1', 'utf-8', 'cp866']
+        
+        for encoding in encodings:
+            try:
+                result = text.encode(encoding)
+                logger.debug(f"Successfully encoded using {encoding}")
+                return result
+            except UnicodeEncodeError:
+                logger.debug(f"Failed to encode with {encoding}")
+                continue
+                
+        # If all encodings fail, use utf-8 with replace option
+        logger.warning("All encodings failed, using utf-8 with 'replace'")
+        return text.encode('utf-8', errors='replace')
+        
+    def _try_decode_multiple_encodings(self, data):
+        """Try multiple decodings to convert bytes to text, starting with the most compatible with Delphi"""
+        encodings = ['cp1251', 'latin1', 'utf-8', 'cp866']
+        
+        for encoding in encodings:
+            try:
+                result = data.decode(encoding)
+                logger.debug(f"Successfully decoded using {encoding}")
+                return result
+            except UnicodeDecodeError:
+                logger.debug(f"Failed to decode with {encoding}")
+                continue
+                
+        # If all decodings fail, use utf-8 with replace option
+        logger.warning("All decodings failed, using utf-8 with 'replace'")
+        return data.decode('utf-8', errors='replace')
+
     def compress_data(self, data):
         """Compresses and encrypts data using the crypto key - matches Delphi implementation"""
         try:
             logger.debug(f"Compressing data (length: {len(data)})")
             
-            # 1. Convert string to bytes using Latin-1 (similar to Delphi's string handling)
-            # Use latin1 encoding to match Delphi's ANSI string representation
-            input_bytes = data.encode('latin1')
-            logger.debug(f"Input bytes (latin1): {len(input_bytes)} bytes")
+            # 1. Convert string to bytes using appropriate encoding for Cyrillic
+            input_bytes = self._try_multiple_encodings(data)
+            logger.debug(f"Input bytes: {len(input_bytes)} bytes")
             
             # 2. Compress data with zlib at level 6 (Delphi default)
             compressed_data = zlib.compress(input_bytes, level=6)
@@ -123,8 +182,8 @@ class DataCompressor:
                         logger.error("Failed to decompress even after cleaning")
                         raise
             
-            # 4. Convert back to string using Latin-1 (similar to Delphi's string handling)
-            result = decompressed.decode('latin1', errors='replace')
+            # 4. Try different character encodings
+            result = self._try_decode_multiple_encodings(decompressed)
             logger.debug(f"Decoded result (length: {len(result)})")
             
             return result
