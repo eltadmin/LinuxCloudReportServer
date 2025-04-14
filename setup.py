@@ -17,6 +17,7 @@ setup(
         'pydantic>=1.8.2',
         'cryptography>=3.4.7',
         'PyYAML>=5.4.1',
-        'aiomysql>=0.1.1'
+        'aiomysql>=0.1.1',
+        'pycryptodome>=3.15.0'
     ],
 ) 
