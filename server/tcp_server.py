@@ -288,12 +288,11 @@ class TCPServer:
                                 debug_server_key = "ABCDEFGH"  # Exactly 8 characters length
                                 debug_key_len = len(debug_server_key)
                                 
-                                # Use the absolute simplest format possible
-                                # Send in raw ASCII bytes with CRLF line endings
-                                # No serialization, no binary format, just plain text
-                                plain_response = f"LEN={debug_key_len}\r\nKEY={debug_server_key}\r\n".encode('ascii')
+                                # Test a format without trailing newline - exact TStringList format
+                                # This is a common issue with Delphi clients expecting exact TStringList format
+                                plain_response = f"KEY={debug_server_key}\r\nLEN={debug_key_len}".encode('ascii')
                                 
-                                logger.info(f"!!RETURNING TO BASIC FORMAT: {repr(plain_response)}!!")
+                                logger.info(f"!!TESTING KEY FIRST FORMAT: {repr(plain_response)}!!")
                                 logger.info(f"Raw bytes: {' '.join([f'{b:02x}' for b in plain_response])}")
                                 
                                 # No modification at all, just use exactly what worked before
@@ -544,8 +543,8 @@ class TCPServer:
                 
                 # Construct the default response format
                 response_lines = [
-                    f"LEN={key_len}",
                     f"KEY={server_key}",
+                    f"LEN={key_len}",
                     ""  # Empty line at end
                 ]
                 response_text = "\r\n".join(response_lines)
@@ -557,7 +556,7 @@ class TCPServer:
                 
                 # Use a fixed format response - reverting to original format
                 # Simplify back to a known working format
-                simple_response = f"LEN={key_len}\r\nKEY={server_key}\r\n".encode('ascii')
+                simple_response = f"KEY={server_key}\r\nLEN={key_len}\r\n".encode('ascii')
                 logger.info(f"Using standard format: {repr(simple_response)}")
                 response = simple_response
                 
@@ -579,7 +578,7 @@ class TCPServer:
                     # - Single CRLF between parameters (critical for Delphi)
                     # - NO trailing CRLF at the end (important for some Delphi apps)
                     # - Direct return without any normalization or modification
-                    simple_format = f"LEN={debug_key_len}\r\nKEY={debug_server_key}"
+                    simple_format = f"KEY={debug_server_key}\r\nLEN={debug_key_len}"
                     clean_response = simple_format.encode('ascii')
                     
                     # Log exact response details for debugging
