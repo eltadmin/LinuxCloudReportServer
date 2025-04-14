@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 DEBUG_MODE = True
 DEBUG_SERVER_KEY = "ABCDEFGH"  # Exactly 8 characters
 
+# Additional debug flags
+USE_FIXED_DEBUG_RESPONSE = True  # Use a fixed format response for INIT command
+USE_FIXED_DEBUG_KEY = True  # Use a fixed crypto key for encryption/decryption tests
+
 
 class TCPConnection:
     def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
@@ -371,26 +375,109 @@ class TCPServer:
                 host_first_chars = conn.client_host[:2]  # First 2 chars
                 orig_host_last_char = conn.client_host[-1:]  # Last char
                 
-                # Construct crypto key
-                conn.crypto_key = server_key + crypto_dict_part + host_first_chars + orig_host_last_char
-                logger.info(f"Generated crypto key: {conn.crypto_key}")
+                # Special case for cleaning hostname
+                logger.info(f"Host parts: original='{host_first_chars + orig_host_last_char}', cleaned='{conn.client_host[:3]}'")
                 
-                # Test encryption
+                # Test multiple key combinations for Delphi compatibility
+                key_variants = {
+                    "оригинален с тире": server_key + crypto_dict_part + host_first_chars + orig_host_last_char,
+                    "с първи 3 букви от хоста": server_key + crypto_dict_part + conn.client_host[:3],
+                    "с първа буква от хоста": server_key + crypto_dict_part + conn.client_host[0],
+                    "само частта от речника": server_key + crypto_dict_part,
+                    "само сървърски ключ": server_key,
+                }
+                
+                # Test each key variant
+                working_key = None
+                working_key_name = None
+                
+                for variant_name, test_key in key_variants.items():
+                    logger.info(f"Testing key variant '{variant_name}': {test_key}")
+                    # Create a temporary connection with this key
+                    temp_conn = TCPConnection(conn.reader, conn.writer)
+                    temp_conn.crypto_key = test_key
+                    
+                    # Test encryption
+                    if temp_conn.test_encryption():
+                        logger.info(f"Key variant '{variant_name}' works: {test_key}")
+                        working_key = test_key
+                        working_key_name = variant_name
+                        break
+                
+                # Use the working key or default to the original
+                if working_key:
+                    conn.crypto_key = working_key
+                    logger.info(f"Using crypto key: {conn.crypto_key} ({working_key_name})")
+                else:
+                    # Construct crypto key (original method)
+                    conn.crypto_key = server_key + crypto_dict_part + host_first_chars + orig_host_last_char
+                    logger.info(f"Using default crypto key: {conn.crypto_key} (no variants worked)")
+                
+                # Test encryption with the selected key
+                logger.info("Running thorough crypto key verification tests...")
                 test_result = conn.test_encryption()
                 if not test_result:
                     logger.error(f"Encryption test failed with key: {conn.crypto_key}")
                     logger.error(f"Last error: {conn.last_error}")
-                    # Continue anyway, client will send error if key doesn't work
+                else:
+                    logger.info("All crypto validation tests passed successfully!")
                 
                 # Important: Try a version that fully matches a standard Delphi response format
                 # Instead of including the count at the beginning (which is used by TStringList.SaveToStream),
                 # just send the key-value pairs with CRLF line endings.
                 # This is the most common format for Delphi applications expecting plain key=value pairs.
                 
-                # Try a very bare format - just key=value pairs that Delphi can parse
-                response = f"KEY={server_key}\r\nLEN={key_len}".encode('ascii')
-                logger.info(f"INIT response (bare key-value format): {response}")
-                logger.info(f"Response hex: {' '.join([f'{b:02x}' for b in response])}")
+                # Use SIMPLIFIED RESPONSE FORMAT optimized for Delphi
+                logger.info("Using SIMPLIFIED RESPONSE FORMAT optimized for Delphi")
+                
+                # Reset to the absolute simplest format
+                # Use fixed key with known working values
+                debug_server_key = "ABCDEFGH"  # Exactly 8 characters length
+                debug_key_len = len(debug_server_key)
+                
+                # Format 1: LEN first with CRLF, но без trailing CRLF
+                format1 = f"LEN={debug_key_len}\r\nKEY={debug_server_key}"
+                
+                # Format 2: LEN first with LF only, но без trailing LF
+                format2 = f"LEN={debug_key_len}\nKEY={debug_server_key}"
+                
+                # Format 3: KEY first with CRLF, но без trailing CRLF
+                format3 = f"KEY={debug_server_key}\r\nLEN={debug_key_len}"
+                
+                # Choose which format to use - let's try format1 (LEN first with CRLF)
+                simple_format = format1
+                clean_response = simple_format.encode('ascii')
+                
+                logger.info(f"SIMPLIFIED RESPONSE: {clean_response}")
+                logger.info(f"RESPONSE HEX: {' '.join([f'{b:02x}' for b in clean_response])}")
+                
+                # Show all format options for debugging
+                logger.info(f"Format 1 (LEN first, CRLF): {format1.encode('ascii')}")
+                logger.info(f"Format 2 (LEN first, LF): {format2.encode('ascii')}")
+                logger.info(f"Format 3 (KEY first, CRLF): {format3.encode('ascii')}")
+                
+                # Override the crypto key for debugging
+                if USE_FIXED_DEBUG_KEY:
+                    # Force a known working key
+                    dict_entry = CRYPTO_DICTIONARY[key_id - 1]
+                    crypto_dict_part = dict_entry[:debug_key_len]
+                    host_first_chars = conn.client_host[:2]
+                    orig_host_last_char = conn.client_host[-1:]
+                    conn.crypto_key = debug_server_key + crypto_dict_part + host_first_chars + orig_host_last_char
+                    
+                    logger.info(f"DEBUG MODE: Using crypto key: {conn.crypto_key}")
+                    
+                    # Test that encryption works with this key
+                    logger.info("DEBUG MODE: Testing encryption with key...")
+                    test_result = conn.test_encryption()
+                    logger.info(f"DEBUG MODE: Encryption test result: {test_result}")
+                
+                # Use the debug response
+                logger.info(f"INIT raw response bytes: {' '.join([f'{b:02x}' for b in clean_response])}")
+                response = clean_response
+                
+                # Final normalized response for clear logging
+                logger.info(f"Final normalized response: {response}")
                 
                 # Log the crypto key for debugging
                 logger.info(f"Using crypto key for client {conn.client_host}: {conn.crypto_key}")
@@ -409,7 +496,43 @@ class TCPServer:
                     logger.error(f"INIT parameters: ID={conn.client_id}, host={conn.client_host}")
                     logger.error(f"Server key: {conn.server_key}, length: {conn.key_length}")
                     logger.error(f"Crypto key: {conn.crypto_key}")
-                    logger.error("Try different response format: LEN={len}\\r\\nKEY={key}\\r\\n")
+                    logger.error("Try different response format: LEN={len}\r\nKEY={key}\r\n")
+                    
+                    # Add more diagnostic information
+                    if hasattr(conn, 'last_error') and conn.last_error:
+                        logger.error(f"Последният неработещ ключ: '{conn.crypto_key}'")
+                    
+                    # Log error parts for better analysis
+                    logger.error(f"ERRL command full data: {command}")
+                    parts = command.split()
+                    logger.error(f"ERRL command parts: {parts}")
+                    for i, part in enumerate(parts[1:], 1):
+                        logger.error(f"ERRL part {i}: '{part}'")
+                    
+                    logger.error("Анализ: Проблем с форматирането на INIT отговора или неправилен криптиращ ключ.")
+                    logger.error(f"INIT параметри: ID={conn.client_id}, host={conn.client_host}")
+                    logger.error(f"Изпратен ключ: {conn.server_key}, дължина: {conn.key_length}")
+                    logger.error(f"===== Last Client-Server Communication =====")
+                    logger.error(f"Client ID from command: unknown")
+                    logger.error(f"Suggested corrected response format: 'LEN={conn.key_length}\nKEY={conn.server_key}\n'")
+                    logger.error(f"Последен успешен тест на криптирането със сървърски ключ: {conn.crypto_key}")
+                    test_result = conn.test_encryption()
+                    logger.error(f"Тест на криптирането: {test_result}")
+                    
+                    # Host components analysis
+                    logger.error("Компоненти на ключа:")
+                    logger.error(f"  server_key: {conn.server_key}")
+                    logger.error(f"  dict_part: {CRYPTO_DICTIONARY[0][:8]}")
+                    logger.error("  host parts variance:")
+                    logger.error(f"    first 2 chars: {conn.client_host[:2]}")
+                    logger.error(f"    last char: {conn.client_host[-1:]}")
+                    logger.error(f"    first 2 + last: {conn.client_host[:2] + conn.client_host[-1:]}")
+                    logger.error(f"    first 3 chars: {conn.client_host[:3]}")
+                    logger.error(f"    first char: {conn.client_host[0]}")
+                    
+                    # Analyze host chars
+                    host_chars = " ".join([f"{c}({ord(c)})" for c in conn.client_host])
+                    logger.error(f"  host chars: {host_chars}")
                 
                 return b'OK'
                 
