@@ -583,9 +583,10 @@ class TCPServer:
                     
                     # Alternative format specifically for this client type
                     if needs_special_format:
-                        # Try with DOS-style CRLF and explicit key ordering
-                        debug_response = f"LEN={debug_key_len}\r\nKEY={debug_server_key}\r\n".encode('ascii')
-                        logger.info(f"Using special format for client {conn.client_host} with LEN first")
+                        # Try a completely different format - no trailing CRLF at all
+                        # Sometimes Delphi applications need an exact format without any trailing line breaks
+                        debug_response = f"LEN={debug_key_len}\r\nKEY={debug_server_key}".encode('ascii')
+                        logger.info(f"Using minimal format for client {conn.client_host} - no trailing CRLF")
                     
                     # Override all previous settings
                     logger.info(f"!!! USING FIXED DEBUG RESPONSE: {repr(debug_response)} !!!")
