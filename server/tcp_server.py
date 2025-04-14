@@ -275,14 +275,14 @@ class TCPServer:
                                 # Format based on the server logs error messages
                                 raw_response = f"LEN={conn.key_length}\r\nKEY={conn.server_key}\r\n".encode('ascii')
                                 
-                                # Try using the exact format from the error logs "suggested format"
-                                # Which is plain LF line endings with no trailing line break
-                                suggested_format = f"LEN={conn.key_length}\nKEY={conn.server_key}\n".encode('ascii')
-                                logger.info(f"!!FORCING SUGGESTED FORMAT FROM LOGS: {repr(suggested_format)}!!")
+                                # Try using a completely flat format with no line breaks at all
+                                # Many Delphi clients sometimes have trouble with multiline parsing
+                                flat_format = f"LEN={conn.key_length};KEY={conn.server_key}".encode('ascii')
+                                logger.info(f"!!TESTING FLAT FORMAT WITHOUT LINE BREAKS: {repr(flat_format)}!!")
                                 
                                 # Detailed binary byte-by-byte logging
                                 byte_details = []
-                                for i, b in enumerate(suggested_format):
+                                for i, b in enumerate(flat_format):
                                     if 32 <= b <= 126:
                                         byte_details.append(f"{i}:{b:02x}({chr(b)})")
                                     else:
@@ -290,7 +290,7 @@ class TCPServer:
                                 logger.info(f"Exact bytes: {' '.join(byte_details)}")
                                 
                                 # Don't apply any normalization
-                                response = suggested_format
+                                response = flat_format
                             
                             # Double check the final response
                             logger.info(f"Final normalized response: {repr(response)}")
