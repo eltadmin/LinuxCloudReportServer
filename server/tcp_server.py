@@ -10,6 +10,8 @@ import string
 import traceback
 from .constants import CRYPTO_DICTIONARY
 from .crypto import DataCompressor
+import base64
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -76,17 +78,31 @@ class TCPConnection:
             # Use ASCII test string that doesn't include Cyrillic characters
             # The client uses "ТТ=Test" but for our test we'll use ASCII only
             test_string = "Test=1234"
+            logger.debug(f"Testing encryption with key '{self.crypto_key}' and test string '{test_string}'")
             
             # Try to encrypt and then decrypt the test string
             encrypted = self.encrypt_data(test_string)
             if not encrypted:
                 self.last_error = "Failed to encrypt test data"
                 return False
+            
+            # Dump encrypted data for debugging
+            logger.debug(f"Encrypted data (base64): '{encrypted}'")
+            try:
+                # Show first 16 bytes of raw encrypted data
+                raw_data = base64.b64decode(encrypted)
+                hex_dump = ' '.join([f'{b:02x}' for b in raw_data[:16]])
+                logger.debug(f"Raw encrypted data (first 16 bytes): {hex_dump}")
+            except:
+                pass
                 
             decrypted = self.decrypt_data(encrypted)
             if not decrypted:
                 self.last_error = "Failed to decrypt test data"
                 return False
+            
+            # Dump decrypted data for comparison
+            logger.debug(f"Decrypted data: '{decrypted}'")
                 
             # Check if decryption is correct
             result = test_string == decrypted
@@ -96,6 +112,7 @@ class TCPConnection:
             return result
         except Exception as e:
             self.last_error = f"Encryption test failed: {str(e)}"
+            logger.error(f"Exception during encryption test: {e}", exc_info=True)
             return False
 
 class TCPServer:
@@ -764,3 +781,61 @@ class TCPServer:
         except Exception as e:
             logger.error(f"Unhandled error in handle_command: {e}", exc_info=True)
             return f'ERROR Internal server error: {str(e)}'.encode('utf-8') 
+
+    def get_msg_type(self, content, client, response_message, crypto=None):
+        """
+        Extracts message type and checks required message format.
+        """
+        result = ''
+
+        # We're looking for a message type signature
+        for msg_type in self.msg_types:
+            if msg_type in content:
+                result = msg_type
+                break
+
+        if not result:
+            logger.debug(f"No valid message type found in content: '{content[:100]}...'")
+            if "TT=" in content:
+                # This might be an encrypted message - check for TT= in various encodings
+                logger.debug("Found 'TT=' indicator, attempting to decode as message with validation field")
+                
+                # Detailed logging of the validation field extraction attempt
+                try:
+                    validation_field_match = re.search(r'TT=([^&]*)', content)
+                    if validation_field_match:
+                        validation_field = validation_field_match.group(1)
+                        logger.debug(f"Extracted validation field: '{validation_field}'")
+                        
+                        # Check if it's any of the expected values in different encodings
+                        expected_values = ["Test", "Тест"]
+                        for expected in expected_values:
+                            for encoding in ['utf-8', 'cp1251', 'latin1']:
+                                try:
+                                    encoded_expected = expected.encode(encoding).decode('latin1')
+                                    if validation_field == encoded_expected:
+                                        logger.debug(f"Validation field matches '{expected}' encoded with {encoding}")
+                                        return "TT=TEST"
+                                    elif validation_field.lower() == encoded_expected.lower():
+                                        logger.debug(f"Validation field matches '{expected}' (case-insensitive) encoded with {encoding}")
+                                        return "TT=TEST"
+                                except Exception as e:
+                                    logger.debug(f"Error checking encoding {encoding} for value '{expected}': {e}")
+                                    continue
+                                
+                        logger.debug(f"Validation field '{validation_field}' did not match any expected values")
+                    else:
+                        logger.debug("Found 'TT=' but couldn't extract validation field value")
+                except Exception as e:
+                    logger.debug(f"Error processing validation field: {e}")
+                
+                response_message.set_error_message(content="", is_error=True)
+                logger.error(f"Authentication failed: {content}")
+                return "AUTH_ERROR"
+
+            response_message.set_error_message(content="", is_error=True)
+            logger.error(f"Message type not recognized: {content}")
+            return "ERROR"
+
+        logger.debug(f"Identified message type: {result}")
+        return result 

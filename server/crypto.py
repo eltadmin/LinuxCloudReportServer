@@ -104,28 +104,30 @@ class DataCompressor:
     def compress_data(self, data):
         """Compresses and encrypts data using the crypto key - matches Delphi implementation"""
         try:
-            logger.debug(f"Compressing data (length: {len(data)})")
+            logger.debug(f"Starting compress_data with key '{self.original_key}', MD5 hash: {self.aes_key.hex()}")
+            logger.debug(f"Input data (length: {len(data)}): '{data}'")
             
             # 1. Convert string to bytes using appropriate encoding for Cyrillic
             input_bytes = self._try_multiple_encodings(data)
-            logger.debug(f"Input bytes: {len(input_bytes)} bytes")
+            logger.debug(f"Input bytes ({len(input_bytes)} bytes): {input_bytes.hex()[:60]}...")
             
             # 2. Compress data with zlib at level 6 (Delphi default)
             compressed_data = zlib.compress(input_bytes, level=6)
-            logger.debug(f"Compressed size: {len(compressed_data)} bytes")
+            logger.debug(f"Compressed data ({len(compressed_data)} bytes): {compressed_data.hex()[:60]}...")
             
             # 3. Ensure data is a multiple of the block size (similar to Delphi's StringStream behavior)
             padded_data = self._ensure_block_size(compressed_data)
-            logger.debug(f"Block aligned size: {len(padded_data)} bytes")
+            padding_added = len(padded_data) - len(compressed_data)
+            logger.debug(f"Padded data ({len(padded_data)} bytes, added {padding_added} bytes padding): {padded_data.hex()[:60]}...")
             
             # 4. Encrypt with Rijndael (AES) using fixed IV
             cipher = AES.new(self.aes_key, AES.MODE_CBC, self.iv)
             encrypted_data = cipher.encrypt(padded_data)
-            logger.debug(f"Encrypted size: {len(encrypted_data)} bytes")
+            logger.debug(f"Encrypted data ({len(encrypted_data)} bytes): {encrypted_data.hex()[:60]}...")
             
             # 5. Base64 encode WITHOUT including IV - to match Delphi behavior
             result = base64.b64encode(encrypted_data).decode('ascii')
-            logger.debug(f"Base64 encoded result (length: {len(result)})")
+            logger.debug(f"Base64 result (length: {len(result)}): '{result[:60]}...'")
             
             return result
             
@@ -138,35 +140,45 @@ class DataCompressor:
     def decompress_data(self, data):
         """Decrypts and decompresses data using the crypto key - matches Delphi implementation"""
         try:
-            logger.debug(f"Decompressing data (length: {len(data)})")
+            logger.debug(f"Starting decompress_data with key '{self.original_key}', MD5 hash: {self.aes_key.hex()}")
+            logger.debug(f"Input data (length: {len(data)}): '{data[:60]}...'")
             
             # 1. Base64 decode
-            decoded = base64.b64decode(data)
-            logger.debug(f"Base64 decoded size: {len(decoded)} bytes")
+            try:
+                decoded = base64.b64decode(data)
+                logger.debug(f"Base64 decoded ({len(decoded)} bytes): {decoded.hex()[:60]}...")
+            except Exception as e:
+                logger.error(f"Base64 decoding failed: {e}")
+                raise
             
             # 2. Decrypt with Rijndael (AES) using fixed IV
-            cipher = AES.new(self.aes_key, AES.MODE_CBC, self.iv)
-            decrypted = cipher.decrypt(decoded)
-            logger.debug(f"Decrypted size: {len(decrypted)} bytes")
+            try:
+                cipher = AES.new(self.aes_key, AES.MODE_CBC, self.iv)
+                decrypted = cipher.decrypt(decoded)
+                logger.debug(f"Decrypted data ({len(decrypted)} bytes): {decrypted.hex()[:60]}...")
+            except Exception as e:
+                logger.error(f"AES decryption failed: {e}")
+                raise
             
             # 3. Decompress with zlib - let zlib handle trailing zeros
             try:
                 decompressed = zlib.decompress(decrypted)
-                logger.debug(f"Decompressed size: {len(decompressed)} bytes")
+                logger.debug(f"Decompressed data ({len(decompressed)} bytes): {decompressed.hex()[:60]}...")
             except zlib.error as e:
+                logger.warning(f"Initial zlib decompression failed: {e}")
                 # Try to find the actual compressed data by checking for zlib header
                 # (similar to how Delphi StringStream might behave)
                 zlib_header = b'\x78'  # Most zlib streams start with 0x78
                 if zlib_header in decrypted[:4]:
                     pos = decrypted.find(zlib_header)
                     if pos > -1:
-                        logger.debug(f"Found zlib header at position {pos}")
+                        logger.debug(f"Found zlib header at position {pos}: {decrypted[pos:pos+4].hex()}")
                         decrypted = decrypted[pos:]
                         try:
                             decompressed = zlib.decompress(decrypted)
-                            logger.debug(f"Decompressed after header fix: {len(decompressed)} bytes")
-                        except:
-                            logger.error("Failed to decompress even after finding zlib header")
+                            logger.debug(f"Decompressed after header fix ({len(decompressed)} bytes): {decompressed.hex()[:60]}...")
+                        except Exception as e:
+                            logger.error(f"Secondary decompression failed even after finding zlib header: {e}")
                             raise
                     else:
                         raise
@@ -175,16 +187,20 @@ class DataCompressor:
                     try:
                         # Remove trailing zeros
                         clean_data = decrypted.rstrip(b'\x00')
-                        logger.debug(f"Cleaned data size: {len(clean_data)} bytes")
+                        logger.debug(f"Cleaned data ({len(clean_data)} bytes, removed {len(decrypted)-len(clean_data)} bytes): {clean_data.hex()[:60]}...")
                         decompressed = zlib.decompress(clean_data)
-                        logger.debug(f"Decompressed after cleaning: {len(decompressed)} bytes")
-                    except:
-                        logger.error("Failed to decompress even after cleaning")
+                        logger.debug(f"Decompressed after cleaning ({len(decompressed)} bytes): {decompressed.hex()[:60]}...")
+                    except Exception as e:
+                        logger.error(f"Secondary decompression failed even after cleaning: {e}")
                         raise
             
             # 4. Try different character encodings
-            result = self._try_decode_multiple_encodings(decompressed)
-            logger.debug(f"Decoded result (length: {len(result)})")
+            try:
+                result = self._try_decode_multiple_encodings(decompressed)
+                logger.debug(f"Decoded result (length: {len(result)}): '{result[:60]}...'")
+            except Exception as e:
+                logger.error(f"Character decoding failed: {e}")
+                raise
             
             return result
             
