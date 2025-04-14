@@ -300,8 +300,8 @@ class TCPServer:
                 
                 # Generate crypto key
                 # The key length is used to determine how many characters to take from the dictionary entry
-                # Ensure key length is at least 4 for better security
-                key_len = random.randint(4, 10)  # Changed from random.randint(1, 12)
+                # Use fixed length of 8 for better compatibility
+                key_len = 8  # Changed from random.randint(4, 10)
                 server_key = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
                 
                 # Store crypto key components
