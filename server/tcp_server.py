@@ -570,25 +570,24 @@ class TCPServer:
                     debug_server_key = "ABCDEFGH"  # Exactly 8 characters length
                     debug_key_len = len(debug_server_key)
                     
-                    # Опростен, напълно предсказуем формат за всички клиенти
-                    # Този формат работи с Delphi TStringList клиенти
-                    # Специфичен за всички клиенти с Delphi
-                    logger.info(f"Using SIMPLE FORMAT for best Delphi compatibility")
+                    # Radical simplification - removing all complex multi-format handling
+                    # We stick with a single, well-defined format optimized for Delphi clients
+                    logger.info("Using SIMPLIFIED RESPONSE FORMAT optimized for Delphi")
                     
-                    # Форматът съдържа само необходимата информация
-                    # Този формат демонстрира успешно работа с други подобни клиенти
-                    # Един единствен CRLF между LEN и KEY, никакви trailing CR/LF
+                    # The format is deliberately minimal and structured exactly like Delphi TStringList output
+                    # - Only the necessary parameters (LEN and KEY)
+                    # - Single CRLF between parameters (critical for Delphi)
+                    # - NO trailing CRLF at the end (important for some Delphi apps)
+                    # - Direct return without any normalization or modification
                     simple_format = f"LEN={debug_key_len}\r\nKEY={debug_server_key}"
                     clean_response = simple_format.encode('ascii')
                     
-                    # Log response for debugging
+                    # Log exact response details for debugging
                     logger.info(f"SIMPLIFIED RESPONSE: {repr(clean_response)}")
-                    
-                    # Show exact bytes
                     hex_bytes = ' '.join([f'{b:02x}' for b in clean_response])
                     logger.info(f"RESPONSE HEX: {hex_bytes}")
                     
-                    # Setup server key and info for later use
+                    # Set up server key and info
                     conn.server_key = debug_server_key
                     conn.key_length = debug_key_len
                     
@@ -601,12 +600,12 @@ class TCPServer:
                     
                     logger.info(f"DEBUG MODE: Using crypto key: {conn.crypto_key}")
                     
-                    # Verify encryption works
+                    # Test encryption
                     logger.info("Testing encryption with key...")
                     test_result = conn.test_encryption()
                     logger.info(f"Encryption test result: {test_result}")
                     
-                    # Return exact response bytes without any transformations
+                    # Return the exact response without any transformations
                     return clean_response
                 
                 # Log the final response being sent
