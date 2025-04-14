@@ -495,24 +495,47 @@ class TCPServer:
                 
                 # Try with a fixed string format that matches Delphi's TStringList output for testing
                 if True:  # TEMP FIX: Enable during testing
-                    # Build the response byte by byte for exact control WITHOUT status line
-                    hardcoded_bytes = bytearray()
+                    # Try with various format variations based on Delphi TStringList
                     
-                    # LEN parameter - first, without the status line
-                    hardcoded_bytes.extend(f'LEN={key_len}'.encode('ascii'))
-                    hardcoded_bytes.extend(b'\r\n')
+                    # 1. KEY first, with CRLF
+                    crlf_key_first = f"KEY={server_key}\r\nLEN={key_len}\r\n".encode('ascii')
+                    logger.info(f"Format A - KEY first with CRLF: {repr(crlf_key_first)}")
                     
-                    # KEY parameter
-                    hardcoded_bytes.extend(f'KEY={server_key}'.encode('ascii'))
-                    hardcoded_bytes.extend(b'\r\n')
+                    # 2. KEY first, with LF 
+                    lf_key_first = f"KEY={server_key}\nLEN={key_len}\n".encode('ascii')
+                    logger.info(f"Format B - KEY first with LF: {repr(lf_key_first)}")
                     
-                    # Final empty line
-                    hardcoded_bytes.extend(b'\r\n')
+                    # 3. Classic Windows-style format with quotes
+                    classic_format = f"KEY=\"{server_key}\"\r\nLEN={key_len}\r\n".encode('ascii')
+                    logger.info(f"Format C - Classic Windows with quotes: {repr(classic_format)}")
                     
-                    hardcoded_response = bytes(hardcoded_bytes)
-                    logger.info(f"Using simplified format without status line: {repr(hardcoded_response)}")
-                    logger.info(f"Simplified hex: {hardcoded_response.hex()}")
-                    response = hardcoded_response
+                    # 4. Minimal format
+                    minimal_format = f"KEY={server_key}".encode('ascii')
+                    logger.info(f"Format D - Just KEY: {repr(minimal_format)}")
+                    
+                    # 5. Old legacy Delphi 5 TStringList format (LF+CR)
+                    legacy_format = f"KEY={server_key}\n\rLEN={key_len}\n\r".encode('ascii')
+                    logger.info(f"Format E - Legacy Delphi 5 (LF+CR): {repr(legacy_format)}")
+                    
+                    # 6. KEY only with LEN as numeric value (some Delphi clients expected this)
+                    numeric_len = f"KEY={server_key}\r\n{key_len}\r\n".encode('ascii')
+                    logger.info(f"Format F - KEY with numeric LEN: {repr(numeric_len)}")
+                    
+                    # Select which format to try - CHANGE THIS TO LETTER A-F TO TRY DIFFERENT FORMATS
+                    format_to_use = 'B'
+                    
+                    # Map of formats
+                    formats = {
+                        'A': crlf_key_first,
+                        'B': lf_key_first,
+                        'C': classic_format,
+                        'D': minimal_format,
+                        'E': legacy_format,
+                        'F': numeric_len
+                    }
+                    
+                    response = formats[format_to_use]
+                    logger.info(f"Using format {format_to_use}")
                 
                 # Връщаме отговора
                 conn.authenticated = True
