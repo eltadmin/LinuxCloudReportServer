@@ -407,104 +407,54 @@ class TCPServer:
                 # Log both variants
                 logger.info(f"Host parts: original='{orig_host_part}', cleaned='{host_part}'")
                 
-                # Construct the crypto key:
-                # server_key + dict_part + host_part - използваме оригиналната част с тирето за Delphi клиента
-                conn.crypto_key = server_key + crypto_dict_part + orig_host_part
-                
-                # Създаваме алтернативни ключове за тестване, в случай че не работи
-                alt_keys = [
-                    server_key + crypto_dict_part + orig_host_part,  # Оригиналният (с тирето)
-                    server_key + crypto_dict_part + host_part,  # Без тире в края на host частта
-                    server_key + crypto_dict_part,  # Без host_part
-                    server_key + dict_entry[:key_len] + orig_host_part,  # С различен dict_part и оригинален host
-                    # Тествай различни формати на host_part
-                    server_key + crypto_dict_part + conn.client_host[:2],  # Само първите 2 знака
-                    server_key + crypto_dict_part + conn.client_host[-1:],  # Само последния знак
-                    # Тествай различен ред на компонентите
-                    crypto_dict_part + server_key + orig_host_part,
-                    # Тествай с нормализиране на клиентския хост (заменяне на тирета, премахване и т.н.)
-                    server_key + crypto_dict_part + conn.client_host.replace('-', ''),  # Без тирета
-                    server_key + crypto_dict_part + conn.client_host.replace('-', ' ').strip()[:2] + conn.client_host.replace('-', ' ').strip()[-1:],  # Чисти пространства
-                    # Често срещан проблем с последния символ
-                    server_key + crypto_dict_part + host_first_chars,  # Само първите 2 знака, без последен
-                    # Опитай и с NE (само първите 2 букви, често срещана грешка)
-                    server_key + crypto_dict_part + "NE"
+                # Пробваме да тестваме и двете версии на ключовете - със и без тирето
+                # Първо тества оригиналния и ако работи, го използваме
+                key_variants = [
+                    (server_key + crypto_dict_part + orig_host_part, "оригинален с тире"),
+                    (server_key + crypto_dict_part + host_part, "без тире")
                 ]
                 
-                conn.alt_crypto_keys = alt_keys
+                working_key = None
+                working_key_desc = None
                 
-                logger.info(f"Generated crypto key: server_key={server_key}, length={key_len}, full_key={conn.crypto_key}")
-                logger.info(f"Crypto key components: dict_part='{crypto_dict_part}', host_part='{host_part}', key_id={key_id}")
-                logger.info(f"Alternative keys for testing if needed:")
-                for i, alt_key in enumerate(alt_keys):
-                    logger.info(f"  Alt key {i+1}: {alt_key}")
+                for test_key, key_desc in key_variants:
+                    conn.crypto_key = test_key
+                    try:
+                        logger.info(f"Testing key variant '{key_desc}': {test_key}")
+                        encrypted = conn.encrypt_data("test")
+                        decrypted = conn.decrypt_data(encrypted)
+                        if decrypted == "test":
+                            logger.info(f"Key variant '{key_desc}' works: {test_key}")
+                            working_key = test_key
+                            working_key_desc = key_desc
+                            break
+                    except Exception as e:
+                        logger.warning(f"Key variant '{key_desc}' failed: {e}")
                 
-                # Test the original key first
-                conn.crypto_key = server_key + crypto_dict_part + orig_host_part
-                
-                # Get the first key piece to verify that all is well
-                try:
-                    logger.info(f"Testing crypto key: '{conn.crypto_key}' (length: {len(conn.crypto_key)})")
-                    logger.info(f"Server key: '{server_key}', dict_part: '{crypto_dict_part}', host_part: '{orig_host_part}'")
+                # Ако няма работещ ключ, използваме оригиналния
+                if working_key is None:
+                    working_key = server_key + crypto_dict_part + orig_host_part
+                    working_key_desc = "оригинален (по подразбиране)"
                     
-                    # Тестваме с няколко различни тестови стринга
-                    test_strings = ["test", "TT=Test", "ID=123"]
-                    for test_str in test_strings:
-                        enc_test = conn.encrypt_data(test_str)
-                        dec_test = conn.decrypt_data(enc_test)
-                        if dec_test != test_str:
-                            logger.error(f"Crypto test failed for '{test_str}': '{dec_test}' != '{test_str}'")
-                        else:
-                            logger.info(f"Crypto test passed for '{test_str}'")
-                    
-                    # Проверяваме поне един стринг
-                    enc_test = conn.encrypt_data("test")
-                    dec_test = conn.decrypt_data(enc_test)
-                    if dec_test != "test":
-                        logger.error(f"Crypto test failed: '{dec_test}' != 'test'")
-                        raise Exception("Crypto test failed")
-                    logger.info("Crypto test passed with original key")
-                except Exception as e:
-                    logger.error(f"Exception testing original crypto key: {e}")
-                    logger.info("Trying alternative key combinations...")
-                    
-                    # Try all alternative keys and see if one works
-                    for i, alt_key in enumerate(alt_keys):
-                        conn.crypto_key = alt_key
-                        try:
-                            logger.info(f"Testing alternative key {i+1}/{len(alt_keys)}: '{alt_key}' (length: {len(alt_key)})")
-                            enc_test = conn.encrypt_data("test")
-                            dec_test = conn.decrypt_data(enc_test)
-                            if dec_test == "test":
-                                logger.info(f"Found working key at alternative {i+1}: '{alt_key}'")
-                                break
-                            else:
-                                logger.error(f"Alternative key {i+1} failed: '{dec_test}' != 'test'")
-                        except Exception as e:
-                            logger.error(f"Exception with alternative key {i+1}: {e}")
+                conn.crypto_key = working_key
+                logger.info(f"Using crypto key: {working_key} ({working_key_desc})")
                 
-                # Mark connection as authenticated
+                # Конструираме по-прост отговор, базиран на Delphi TStrings формат
+                response_text = f"KEY={server_key}\r\nLEN={key_len}\r\n\r\n"
+                response = response_text.encode('ascii')
+                
+                # Логваме отговора
+                logger.info(f"INIT response: {response_text.strip()}")
+                logger.info(f"INIT response bytes: {' '.join([f'{b:02x}' for b in response])}")
+                logger.info(f"INIT response bytes length: {len(response)}")
+                logger.info(f"INIT response hex: {response.hex()}")
+                logger.info(f"INIT response repr: {repr(response)}")
+                
+                # Връщаме отговора
                 conn.authenticated = True
-                logger.info(f"Connection authenticated for client {peer}")
+                logger.info(f"Connection authenticated with key: {conn.crypto_key} for client {peer}")
                 
-                # Трябва да се съобразим абсолютно точно с формата, който Delphi очаква
-                # Delphi TStrings.Values парсва ред по ред, като очаква KEY=VALUE формат
-                # Важно: в Delphi Text.Values['KEY'] очаква KEY=value да бъде в началото на ред
-                
-                # Проблемът може да е в липсата на статус код в отговора
-                # Клиентът "може" да очаква 200 OK в началото
-                # Ще пробваме точно този формат
-                
-                response = b"200 OK\r\n"  # Статус код в началото
-                response += b"LEN=" + str(key_len).encode('ascii') + b"\r\n"  # Параметрите след това
-                response += b"KEY=" + server_key.encode('ascii') + b"\r\n"
-                response += b"\r\n"  # Празен ред накрая - критично за Delphi клиента
-                
-                # Логваме точния формат на отговора за дебъгване
-                # Важно! Не променяйте нищо в горните редове без тестване с клиента
-                logger.debug(f"Response raw bytes: {response!r}")
-                logger.info(f"INIT response (exact format): 200 OK, LEN={key_len}, KEY={server_key}")
-                logger.info(f"INIT raw response bytes: {' '.join([f'{b:02x}' for b in response])}")
+                # Директно връщаме отговора на клиента, без да използваме response механизма
                 return response
                 
             elif cmd == 'ERRL':
@@ -515,7 +465,16 @@ class TCPServer:
                 # Запазваме последния крипто ключ, който не работи
                 if conn.crypto_key:
                     logger.error(f"Последният неработещ ключ: '{conn.crypto_key}'")
-                    
+                
+                # Логваме подробно данните, получени от клиента
+                logger.error(f"ERRL command full data: {command}")
+                logger.error(f"ERRL command parts: {parts}")
+                
+                # Анализираме рестринговете от клиента
+                if parts and len(parts) > 1:
+                    for i, part in enumerate(parts[1:], 1):
+                        logger.error(f"ERRL part {i}: '{part}'")
+                
                 # Опит за анализ на грешката
                 if "Unable to initizlize communication" in error_msg:
                     logger.error("Анализ: Проблем с форматирането на INIT отговора или неправилен криптиращ ключ.")
