@@ -277,7 +277,13 @@ class TCPServer:
                                 logger.info(f"!!FORCING SUGGESTED FORMAT FROM LOGS: {repr(suggested_format)}!!")
                                 
                                 # Detailed binary byte-by-byte logging
-                                logger.info(f"Exact bytes: {' '.join([f'{i}:{b:02x}({chr(b) if 32 <= b <= 126 else "?"})' for i, b in enumerate(suggested_format)])}")
+                                byte_details = []
+                                for i, b in enumerate(suggested_format):
+                                    if 32 <= b <= 126:
+                                        byte_details.append(f"{i}:{b:02x}({chr(b)})")
+                                    else:
+                                        byte_details.append(f"{i}:{b:02x}(?)")
+                                logger.info(f"Exact bytes: {' '.join(byte_details)}")
                                 
                                 # Don't apply any normalization
                                 response = suggested_format
