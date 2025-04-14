@@ -477,7 +477,7 @@ class TCPServer:
                 except Exception as e:
                     logger.error(f"Error during crypto validation: {e}")
                 
-                # Конструираме отговор формат без статус линия
+                # Construct the default response format
                 response_lines = [
                     f"LEN={key_len}",
                     f"KEY={server_key}",
@@ -486,128 +486,54 @@ class TCPServer:
                 response_text = "\r\n".join(response_lines)
                 response = response_text.encode('ascii')
                 
-                # Логваме отговора
-                logger.info(f"INIT response: {response_text.strip()}")
-                logger.info(f"INIT response bytes: {' '.join([f'{b:02x}' for b in response])}")
-                logger.info(f"INIT response bytes length: {len(response)}")
-                logger.info(f"INIT response hex: {response.hex()}")
-                logger.info(f"INIT response repr: {repr(response)}")
-                
-                # Log final response right before sending
-                detailed_bytes = []
-                for i, b in enumerate(response):
-                    if 32 <= b <= 126:
-                        detailed_bytes.append(f"{i}:{chr(b)}({b:02x})")
-                    else:
-                        detailed_bytes.append(f"{i}:\\x{b:02x}")
-                logger.info(f"INIT RESPONSE Detailed bytes: {' '.join(detailed_bytes)}")
-                
-                # Hex dump for easier viewing
-                hex_dump_lines = []
-                for i in range(0, len(response), 16):
-                    chunk = response[i:i+16]
-                    hex_line = ' '.join([f"{b:02x}" for b in chunk])
-                    ascii_line = ''.join([chr(b) if 32 <= b <= 126 else '.' for b in chunk])
-                    hex_dump_lines.append(f"{i:04x}: {hex_line:<48} | {ascii_line}")
-                logger.info(f"INIT RESPONSE Hex dump:\n" + '\n'.join(hex_dump_lines))
-                
-                # Add Delphi parsing help
-                logger.info("DELPHI PARSING INFO: This is how the response would be handled in Delphi:")
-                
-                # Recreate the response as if processed by Delphi StringList.Text
-                sample_delphi_stringlist = []
-                for line in response.decode('ascii', errors='replace').split('\r\n'):
-                    if line.strip():  # Skip empty lines
-                        sample_delphi_stringlist.append(line)
-                logger.info(f"TStringList.Count would be: {len(sample_delphi_stringlist)}")
-                logger.info(f"TStringList items would be: {sample_delphi_stringlist}")
-                
-                # Recreate how Delphi would parse key=value pairs
-                sample_delphi_values = {}
-                for line in sample_delphi_stringlist:
-                    if '=' in line:
-                        key, value = line.split('=', 1)
-                        # Strip quotes if present
-                        if value.startswith('"') and value.endswith('"'):
-                            value = value[1:-1]
-                        sample_delphi_values[key] = value
-                logger.info(f"Parsed values in Delphi would be: {sample_delphi_values}")
-                
-                # Check for KEY and LEN specifically
-                if 'KEY' in sample_delphi_values:
-                    logger.info(f"Delphi would find KEY={sample_delphi_values['KEY']}")
-                else:
-                    logger.warning("Delphi would NOT find a KEY value!")
-                
-                if 'LEN' in sample_delphi_values:
-                    logger.info(f"Delphi would find LEN={sample_delphi_values['LEN']}")
-                else:
-                    logger.warning("Delphi would NOT find a LEN value!")
-                
-                # Try with a fixed string format that matches Delphi's TStringList output for testing
-                if True:  # TEMP FIX: Enable during testing
-                    # Try with various format variations based on Delphi TStringList
-                    
-                    # 1. KEY first, with CRLF
-                    crlf_key_first = f"KEY={server_key}\r\nLEN={key_len}\r\n".encode('ascii')
-                    logger.info(f"Format A - KEY first with CRLF: {repr(crlf_key_first)}")
-                    
-                    # 2. KEY first, with LF 
-                    lf_key_first = f"KEY={server_key}\nLEN={key_len}\n".encode('ascii')
-                    logger.info(f"Format B - KEY first with LF: {repr(lf_key_first)}")
-                    
-                    # 3. Classic Windows-style format with quotes
-                    classic_format = f"KEY=\"{server_key}\"\r\nLEN={key_len}\r\n".encode('ascii')
-                    logger.info(f"Format C - Classic Windows with quotes: {repr(classic_format)}")
-                    
-                    # 4. Minimal format
-                    minimal_format = f"KEY={server_key}".encode('ascii')
-                    logger.info(f"Format D - Just KEY: {repr(minimal_format)}")
-                    
-                    # 5. Old legacy Delphi 5 TStringList format (LF+CR)
-                    legacy_format = f"KEY={server_key}\n\rLEN={key_len}\n\r".encode('ascii')
-                    logger.info(f"Format E - Legacy Delphi 5 (LF+CR): {repr(legacy_format)}")
-                    
-                    # 6. KEY only with LEN as numeric value (some Delphi clients expected this)
-                    numeric_len = f"KEY={server_key}\r\n{key_len}\r\n".encode('ascii')
-                    logger.info(f"Format F - KEY with numeric LEN: {repr(numeric_len)}")
-                    
-                    # 7. Delphi StringList.Text CRLF endings with equal signs escaped
-                    escaped_format = f"KEY={server_key}\r\nLEN\\={key_len}\r\n\r\n".encode('ascii')
-                    logger.info(f"Format G - Escaped equal signs: {repr(escaped_format)}")
-                    
-                    # 8. Windows INI-file style format
-                    ini_format = f"[Init]\r\nKEY={server_key}\r\nLEN={key_len}\r\n\r\n".encode('ascii')
-                    logger.info(f"Format H - INI file style: {repr(ini_format)}")
-                    
-                    # 9. Delphi XE StringList format with name-value pairs
-                    delphi_xe_format = f"KEY={server_key}\r\nLEN={key_len}\r\n".encode('ascii')
-                    logger.info(f"Format I - Delphi XE StringList: {repr(delphi_xe_format)}")
-                    
-                    # Select which format to try - CHANGE THIS TO LETTER A-I TO TRY DIFFERENT FORMATS
-                    format_to_use = 'I'
-                    
-                    # Map of formats
-                    formats = {
-                        'A': crlf_key_first,
-                        'B': lf_key_first,
-                        'C': classic_format,
-                        'D': minimal_format,
-                        'E': legacy_format,
-                        'F': numeric_len,
-                        'G': escaped_format,
-                        'H': ini_format,
-                        'I': delphi_xe_format
-                    }
-                    
-                    response = formats[format_to_use]
-                    logger.info(f"Using format {format_to_use}")
-                
-                # Връщаме отговора
+                # Log authentication info
                 conn.authenticated = True
                 logger.info(f"Connection authenticated with key: {conn.crypto_key} for client {peer}")
                 
-                # Final sanity check of the exact bytes we're sending
+                # TESTING: Try with completely fixed hardcoded response to test
+                USE_HARDCODED_RESPONSE = True
+                
+                if USE_HARDCODED_RESPONSE:
+                    # Option 1: Exactly matching the original format from the logs with LEN first
+                    hardcoded_response1 = f"LEN={key_len}\r\nKEY={server_key}\r\n".encode('ascii')
+                    logger.info(f"OPTION 1 - STANDARD CRLF: {repr(hardcoded_response1)}")
+                    
+                    # Option 2: Completely plain format with no line endings
+                    hardcoded_response2 = f"LEN={key_len} KEY={server_key}".encode('ascii')
+                    logger.info(f"OPTION 2 - PLAIN NO BREAKS: {repr(hardcoded_response2)}")
+                    
+                    # Option 3: Ultra minimal - just the key with no labels
+                    hardcoded_response3 = f"{server_key}".encode('ascii')
+                    logger.info(f"OPTION 3 - JUST KEY VALUE: {repr(hardcoded_response3)}")
+                    
+                    # Option 4: Binary format with length prefix (Pascal string style)
+                    key_bytes = server_key.encode('ascii')
+                    key_len_bytes = len(key_bytes).to_bytes(4, byteorder='little')
+                    hardcoded_response4 = key_len_bytes + key_bytes
+                    logger.info(f"OPTION 4 - BINARY FORMAT: {repr(hardcoded_response4)}")
+                    
+                    # Option 5: Just the KEY parameter with no LEN
+                    hardcoded_response5 = f"KEY={server_key}".encode('ascii')
+                    logger.info(f"OPTION 5 - JUST KEY PARAM: {repr(hardcoded_response5)}")
+                    
+                    # Choose which option to use
+                    OPTION_TO_USE = 5  # Change this to 1-5
+                    
+                    hardcoded_options = {
+                        1: hardcoded_response1,
+                        2: hardcoded_response2,
+                        3: hardcoded_response3,
+                        4: hardcoded_response4,
+                        5: hardcoded_response5
+                    }
+                    response = hardcoded_options[OPTION_TO_USE]
+                    logger.info(f"USING OPTION {OPTION_TO_USE}: {repr(response)}")
+                
+                # Log the final response being sent
+                logger.info(f"FINAL RESPONSE: {repr(response)}")
+                logger.info(f"RESPONSE (ASCII): {response.decode('ascii', 'replace')}")
+                
+                # Log detailed bytes info
                 def log_bytes_detail(data, msg=''):
                     if isinstance(data, str):
                         data = data.encode('ascii')
@@ -632,7 +558,7 @@ class TCPServer:
                 
                 log_bytes_detail(response, "INIT RESPONSE")
                 
-                # Директно връщаме отговора на клиента, без да използваме response механизма
+                # Directly return the response to the client
                 return response
                 
             elif cmd == 'ERRL':
