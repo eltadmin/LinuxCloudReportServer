@@ -401,6 +401,10 @@ class TCPServer:
                 response += b"LEN=" + str(key_len).encode('ascii') + b"\r\n"
                 response += b"KEY=" + server_key.encode('ascii') + b"\r\n"
                 
+                # ВАЖНО: Delphi клиентът очаква задължително празен ред накрая!
+                # Това е критично за TStrings.Values в Delphi
+                response += b"\r\n"
+                
                 # Try logging the raw byte representation of the response for better debugging
                 logger.debug(f"Response raw bytes: {response!r}")
                 
