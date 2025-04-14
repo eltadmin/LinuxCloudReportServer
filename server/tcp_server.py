@@ -556,8 +556,8 @@ class TCPServer:
                     # Alternative format specifically for this client type
                     if needs_special_format:
                         # Try with DOS-style CRLF and explicit key ordering
-                        debug_response = f"KEY={debug_server_key}\r\nLEN={debug_key_len}\r\n".encode('ascii')
-                        logger.info(f"Using special format for client {conn.client_host} with KEY first")
+                        debug_response = f"LEN={debug_key_len}\r\nKEY={debug_server_key}\r\n".encode('ascii')
+                        logger.info(f"Using special format for client {conn.client_host} with LEN first")
                     
                     # Override all previous settings
                     logger.info(f"!!! USING FIXED DEBUG RESPONSE: {repr(debug_response)} !!!")
