@@ -382,15 +382,18 @@ class TCPServer:
                     logger.error(f"Last error: {conn.last_error}")
                     # Continue anyway, client will send error if key doesn't work
                 
-                # Important: Use exact format Delphi expects
-                # Format: LEN=8\r\nKEY=ABCDEFGH\r\n
-                # The order is important!
-                response = f"LEN={key_len}\r\nKEY={server_key}\r\n".encode('ascii')
-                logger.info(f"INIT response: {response}")
+                # Important: Try a version that fully matches a standard Delphi response format
+                # Instead of including the count at the beginning (which is used by TStringList.SaveToStream),
+                # just send the key-value pairs with CRLF line endings.
+                # This is the most common format for Delphi applications expecting plain key=value pairs.
                 
-                # Log hex representation for debugging
-                hex_response = ' '.join([f'{b:02x}' for b in response])
-                logger.info(f"INIT response hex: {hex_response}")
+                # Try a very bare format - just key=value pairs that Delphi can parse
+                response = f"KEY={server_key}\r\nLEN={key_len}".encode('ascii')
+                logger.info(f"INIT response (bare key-value format): {response}")
+                logger.info(f"Response hex: {' '.join([f'{b:02x}' for b in response])}")
+                
+                # Log the crypto key for debugging
+                logger.info(f"Using crypto key for client {conn.client_host}: {conn.crypto_key}")
                 
                 conn.authenticated = True
                 return response
