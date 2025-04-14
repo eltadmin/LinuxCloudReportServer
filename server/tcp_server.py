@@ -261,15 +261,8 @@ class TCPServer:
                             # Log exact response content for debugging
                             logger.debug(f"INIT response string representation: {response!r}")
                             
-                            # Ensure we have proper CRLF for Delphi client
-                            if isinstance(response, str):
-                                response = response.replace('\n', '\r\n').encode('ascii')
-                            elif isinstance(response, bytes):
-                                # Convert to string, normalize line endings, then back to bytes
-                                response_str = response.decode('ascii', errors='replace')
-                                response = response_str.replace('\n', '\r\n').encode('ascii')
-                            
-                            # Send exactly as is without any modifications
+                            # We're already handling line endings in our response generation,
+                            # so we shouldn't replace newlines again
                             writer.write(response)
                         else:
                             # For other commands
@@ -487,8 +480,9 @@ class TCPServer:
                 # Конструираме отговор в точния формат, който Delphi TStringList очаква
                 # Just key=value pairs on separate lines, without any status code
                 response_lines = [
+                    f"LEN={key_len}",
                     f"KEY={server_key}",
-                    f"LEN={key_len}"
+                    ""  # Empty line at end
                 ]
                 response_text = "\r\n".join(response_lines) + "\r\n"
                 response = response_text.encode('ascii')
@@ -500,9 +494,30 @@ class TCPServer:
                 logger.info(f"INIT response hex: {response.hex()}")
                 logger.info(f"INIT response repr: {repr(response)}")
                 
+                # Try with a fixed string format that matches Delphi's TStringList output for testing
+                if False:  # TEMP FIX: Disable this after testing if it works
+                    hardcoded_response = f"LEN={key_len}\r\nKEY={server_key}\r\n\r\n".encode('ascii')
+                    logger.info(f"Using hardcoded format for debugging: {repr(hardcoded_response)}")
+                    logger.info(f"Hardcoded hex: {hardcoded_response.hex()}")
+                    response = hardcoded_response
+                
                 # Връщаме отговора
                 conn.authenticated = True
                 logger.info(f"Connection authenticated with key: {conn.crypto_key} for client {peer}")
+                
+                # Final sanity check of the exact bytes we're sending
+                def log_bytes_detail(data, msg=''):
+                    if isinstance(data, str):
+                        data = data.encode('ascii')
+                    chars = []
+                    for i, b in enumerate(data):
+                        if 32 <= b <= 126:  # Printable ASCII
+                            chars.append(f"{chr(b)}({b:02x})")
+                        else:
+                            chars.append(f"\\x{b:02x}")
+                    logger.info(f"{msg} Detailed bytes: {' '.join(chars)}")
+                
+                log_bytes_detail(response, "INIT RESPONSE")
                 
                 # Директно връщаме отговора на клиента, без да използваме response механизма
                 return response
@@ -540,8 +555,9 @@ class TCPServer:
                     
                     # Build a suggested fixed response for clients with this error
                     response_lines = [
+                        f"LEN={conn.key_length}",
                         f"KEY={conn.server_key}",
-                        f"LEN={conn.key_length}"
+                        ""  # Empty line at end
                     ]
                     suggested_response = "\r\n".join(response_lines) + "\r\n"
                     logger.error(f"Suggested corrected response format: '{suggested_response}'")
@@ -581,7 +597,7 @@ class TCPServer:
                         logger.error(f"  host chars: {host_chars}")
                         
                     # Покажи INIT отговора за дебъг
-                    logger.error(f"INIT отговор формат: 'KEY={conn.server_key}\\r\\nLEN={conn.key_length}\\r\\n'")
+                    logger.error(f"INIT отговор формат: 'LEN={conn.key_length}\\r\\nKEY={conn.server_key}\\r\\n\\r\\n'")
                 
                 return b'OK'
                 
