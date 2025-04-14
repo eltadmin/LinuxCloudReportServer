@@ -417,19 +417,19 @@ class TCPServer:
                 # Delphi TStrings.Values парсва ред по ред, като очаква KEY=VALUE формат
                 # Важно: в Delphi Text.Values['KEY'] очаква KEY=value да бъде в началото на ред
                 
-                # Преправяме отговора по още по-точен и прост начин, тъй като има проблеми с парсването
-                # В Delphi, TStrings.Values работи по-различно от стандартните HTTP хедъри
-                # Първият ред НЕ трябва да е статус код, а директно ключ-стойност двойка
+                # Проблемът може да е в липсата на статус код в отговора
+                # Клиентът "може" да очаква 200 OK в началото
+                # Ще пробваме точно този формат
                 
-                response = b""
-                response += b"LEN=" + str(key_len).encode('ascii') + b"\r\n"  # Първи ред - дължина на ключа
-                response += b"KEY=" + server_key.encode('ascii') + b"\r\n"  # Втори ред - самият ключ
+                response = b"200 OK\r\n"  # Статус код в началото
+                response += b"LEN=" + str(key_len).encode('ascii') + b"\r\n"  # Параметрите след това
+                response += b"KEY=" + server_key.encode('ascii') + b"\r\n"
                 response += b"\r\n"  # Празен ред накрая - критично за Delphi клиента
                 
                 # Логваме точния формат на отговора за дебъгване
                 # Важно! Не променяйте нищо в горните редове без тестване с клиента
                 logger.debug(f"Response raw bytes: {response!r}")
-                logger.info(f"INIT response (exact format): LEN={key_len}, KEY={server_key}")
+                logger.info(f"INIT response (exact format): 200 OK, LEN={key_len}, KEY={server_key}")
                 logger.info(f"INIT raw response bytes: {' '.join([f'{b:02x}' for b in response])}")
                 return response
                 
@@ -437,6 +437,17 @@ class TCPServer:
                 # Handle error logging from client
                 error_msg = ' '.join(parts[1:])
                 logger.error(f"Client error: {error_msg}")
+                
+                # Запазваме последния крипто ключ, който не работи
+                if conn.crypto_key:
+                    logger.error(f"Последният неработещ ключ: '{conn.crypto_key}'")
+                    
+                # Опит за анализ на грешката
+                if "Unable to initizlize communication" in error_msg:
+                    logger.error("Анализ: Проблем с форматирането на INIT отговора или неправилен криптиращ ключ.")
+                    logger.error(f"INIT параметри: ID={conn.client_id}, host={conn.client_host}")
+                    logger.error(f"Изпратен ключ: {conn.server_key}, дължина: {conn.key_length}")
+                
                 return b'OK'
                 
             elif cmd == 'PING':
