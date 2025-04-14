@@ -444,10 +444,10 @@ class TCPServer:
                 try:
                     logger.info(f"Testing crypto key: '{conn.crypto_key}' (length: {len(conn.crypto_key)})")
                     logger.info(f"Server key: '{server_key}', dict_part: '{crypto_dict_part}', host_part: '{host_part}'")
-                    enc_test = self.encrypt_data(conn, bytes("test", "utf-8"))
-                    dec_test = self.decrypt_data(conn, enc_test)
-                    if dec_test.decode("utf-8") != "test":
-                        logger.error(f"Crypto test failed: '{dec_test.decode('utf-8')}' != 'test'")
+                    enc_test = conn.encrypt_data("test")
+                    dec_test = conn.decrypt_data(enc_test)
+                    if dec_test != "test":
+                        logger.error(f"Crypto test failed: '{dec_test}' != 'test'")
                         raise Exception("Crypto test failed")
                     logger.info("Crypto test passed with original key")
                 except Exception as e:
@@ -459,13 +459,13 @@ class TCPServer:
                         conn.crypto_key = alt_key
                         try:
                             logger.info(f"Testing alternative key {i+1}/{len(alt_keys)}: '{alt_key}' (length: {len(alt_key)})")
-                            enc_test = self.encrypt_data(conn, bytes("test", "utf-8"))
-                            dec_test = self.decrypt_data(conn, enc_test)
-                            if dec_test.decode("utf-8") == "test":
+                            enc_test = conn.encrypt_data("test")
+                            dec_test = conn.decrypt_data(enc_test)
+                            if dec_test == "test":
                                 logger.info(f"Found working key at alternative {i+1}: '{alt_key}'")
                                 break
                             else:
-                                logger.error(f"Alternative key {i+1} failed: '{dec_test.decode('utf-8')}' != 'test'")
+                                logger.error(f"Alternative key {i+1} failed: '{dec_test}' != 'test'")
                         except Exception as e:
                             logger.error(f"Exception with alternative key {i+1}: {e}")
                 
