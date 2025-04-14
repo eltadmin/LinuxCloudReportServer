@@ -494,8 +494,22 @@ class TCPServer:
                 logger.info(f"INIT response repr: {repr(response)}")
                 
                 # Log final response right before sending
-                logger.info(f"INIT RESPONSE Detailed bytes: {' '.join([f"{i}:{chr(b) if 32 <= b <= 126 else '\\x' + f'{b:02x}'}" for i, b in enumerate(response)])}")
-                logger.info(f"INIT RESPONSE Hex dump:\n" + '\n'.join([f"{i:04x}: {response[i:i+16].hex(' '):<48} | {''.join(chr(b) if 32 <= b <= 126 else '.' for b in response[i:i+16])}" for i in range(0, len(response), 16)]))
+                detailed_bytes = []
+                for i, b in enumerate(response):
+                    if 32 <= b <= 126:
+                        detailed_bytes.append(f"{i}:{chr(b)}({b:02x})")
+                    else:
+                        detailed_bytes.append(f"{i}:\\x{b:02x}")
+                logger.info(f"INIT RESPONSE Detailed bytes: {' '.join(detailed_bytes)}")
+                
+                # Hex dump for easier viewing
+                hex_dump_lines = []
+                for i in range(0, len(response), 16):
+                    chunk = response[i:i+16]
+                    hex_line = ' '.join([f"{b:02x}" for b in chunk])
+                    ascii_line = ''.join([chr(b) if 32 <= b <= 126 else '.' for b in chunk])
+                    hex_dump_lines.append(f"{i:04x}: {hex_line:<48} | {ascii_line}")
+                logger.info(f"INIT RESPONSE Hex dump:\n" + '\n'.join(hex_dump_lines))
                 
                 # Add Delphi parsing help
                 logger.info("DELPHI PARSING INFO: This is how the response would be handled in Delphi:")
@@ -543,7 +557,7 @@ class TCPServer:
                     logger.info(f"Format B - KEY first with LF: {repr(lf_key_first)}")
                     
                     # 3. Classic Windows-style format with quotes
-                    classic_format = f"KEY=\"{server_key}\"\r\nLEN={key_len}\r\n\r\n".encode('ascii')
+                    classic_format = f"KEY=\"{server_key}\"\r\nLEN={key_len}\r\n".encode('ascii')
                     logger.info(f"Format C - Classic Windows with quotes: {repr(classic_format)}")
                     
                     # 4. Minimal format
@@ -566,8 +580,12 @@ class TCPServer:
                     ini_format = f"[Init]\r\nKEY={server_key}\r\nLEN={key_len}\r\n\r\n".encode('ascii')
                     logger.info(f"Format H - INI file style: {repr(ini_format)}")
                     
-                    # Select which format to try - CHANGE THIS TO LETTER A-H TO TRY DIFFERENT FORMATS
-                    format_to_use = 'C'
+                    # 9. Delphi XE StringList format with name-value pairs
+                    delphi_xe_format = f"KEY={server_key}\r\nLEN={key_len}\r\n".encode('ascii')
+                    logger.info(f"Format I - Delphi XE StringList: {repr(delphi_xe_format)}")
+                    
+                    # Select which format to try - CHANGE THIS TO LETTER A-I TO TRY DIFFERENT FORMATS
+                    format_to_use = 'I'
                     
                     # Map of formats
                     formats = {
@@ -578,7 +596,8 @@ class TCPServer:
                         'E': legacy_format,
                         'F': numeric_len,
                         'G': escaped_format,
-                        'H': ini_format
+                        'H': ini_format,
+                        'I': delphi_xe_format
                     }
                     
                     response = formats[format_to_use]
@@ -592,19 +611,22 @@ class TCPServer:
                 def log_bytes_detail(data, msg=''):
                     if isinstance(data, str):
                         data = data.encode('ascii')
-                    chars = []
+                    
+                    # Print detailed bytes info
+                    detailed_bytes = []
                     for i, b in enumerate(data):
                         if 32 <= b <= 126:  # Printable ASCII
-                            chars.append(f"{i}:{chr(b)}({b:02x})")
+                            detailed_bytes.append(f"{i}:{chr(b)}({b:02x})")
                         else:
-                            chars.append(f"{i}:\\x{b:02x}")
-                    logger.info(f"{msg} Detailed bytes: {' '.join(chars)}")
+                            detailed_bytes.append(f"{i}:\\x{b:02x}")
+                    logger.info(f"{msg} Detailed bytes: {' '.join(detailed_bytes)}")
                     
                     # Also log as hex dump for easier viewing
                     hex_lines = []
                     for i in range(0, len(data), 16):
-                        hex_line = data[i:i+16].hex(' ')
-                        ascii_line = ''.join(chr(b) if 32 <= b <= 126 else '.' for b in data[i:i+16])
+                        chunk = data[i:i+16]
+                        hex_line = ' '.join([f"{b:02x}" for b in chunk])
+                        ascii_line = ''.join([chr(b) if 32 <= b <= 126 else '.' for b in chunk])
                         hex_lines.append(f"{i:04x}: {hex_line:<48} | {ascii_line}")
                     logger.info(f"{msg} Hex dump:\n" + '\n'.join(hex_lines))
                 
