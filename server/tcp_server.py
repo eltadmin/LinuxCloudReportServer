@@ -16,6 +16,9 @@ import socket
 
 logger = logging.getLogger(__name__)
 
+# Global settings
+USE_FIXED_DEBUG_RESPONSE = True  # Flag for enabling fixed debug responses
+
 class TCPConnection:
     def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         self.reader = reader
@@ -266,6 +269,7 @@ class TCPServer:
                             response = response.replace(b'\n', b'\r\n').replace(b'\r\r\n', b'\r\n')
                             
                             # For INIT command with debug enabled, double check the original format
+                            global USE_FIXED_DEBUG_RESPONSE
                             if USE_FIXED_DEBUG_RESPONSE and command.startswith('INIT'):
                                 # Force the exact format that would be read properly by Delphi client
                                 # Format based on the server logs error messages
@@ -531,7 +535,7 @@ class TCPServer:
                 
                 # FIXED DEBUG RESPONSE - Special mode for testing
                 # This is a complete, exact replacement of the normal negotiation flow
-                USE_FIXED_DEBUG_RESPONSE = True
+                global USE_FIXED_DEBUG_RESPONSE  # Reference the global variable
                 
                 if USE_FIXED_DEBUG_RESPONSE:
                     # Instead of generating a random key, use a fixed key
