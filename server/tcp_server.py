@@ -265,6 +265,23 @@ class TCPServer:
                             # Normalize all line endings to CRLF
                             response = response.replace(b'\n', b'\r\n').replace(b'\r\r\n', b'\r\n')
                             
+                            # For INIT command with debug enabled, double check the original format
+                            if USE_FIXED_DEBUG_RESPONSE and command.startswith('INIT'):
+                                # Force the exact format that would be read properly by Delphi client
+                                # Format based on the server logs error messages
+                                raw_response = f"LEN={conn.key_length}\r\nKEY={conn.server_key}\r\n".encode('ascii')
+                                
+                                # Try using the exact format from the error logs "suggested format"
+                                # Which is plain LF line endings with no trailing line break
+                                suggested_format = f"LEN={conn.key_length}\nKEY={conn.server_key}\n".encode('ascii')
+                                logger.info(f"!!FORCING SUGGESTED FORMAT FROM LOGS: {repr(suggested_format)}!!")
+                                
+                                # Detailed binary byte-by-byte logging
+                                logger.info(f"Exact bytes: {' '.join([f'{i}:{b:02x}({chr(b) if 32 <= b <= 126 else "?"})' for i, b in enumerate(suggested_format)])}")
+                                
+                                # Don't apply any normalization
+                                response = suggested_format
+                            
                             # Double check the final response
                             logger.info(f"Final normalized response: {repr(response)}")
                             
@@ -512,25 +529,28 @@ class TCPServer:
                 
                 if USE_FIXED_DEBUG_RESPONSE:
                     # Instead of generating a random key, use a fixed key
-                    debug_server_key = "TESTKEY1"
+                    debug_server_key = "ABCDEFGH"  # Exactly 8 characters length
                     debug_key_len = len(debug_server_key)
                     
-                    # Choose a response format mode
-                    DEBUG_MODE = 3  # Try different values 1-3
+                    # Check for client-specific patterns that might need special handling
+                    needs_special_format = False
+                    if "NDANAIL" in conn.client_host:
+                        # Special format for this specific client
+                        logger.info(f"Detected special client: {conn.client_host}")
+                        needs_special_format = True
                     
-                    if DEBUG_MODE == 1:
-                        # Standard format
-                        debug_response = f"LEN={debug_key_len}\r\nKEY={debug_server_key}\r\n".encode('ascii')
-                    elif DEBUG_MODE == 2:
-                        # Null-terminated standard format (for C-style string parsing)
-                        debug_response = f"LEN={debug_key_len}\r\nKEY={debug_server_key}\r\n\0".encode('ascii')
-                    elif DEBUG_MODE == 3:
-                        # Simple fixed-length key response with no formatting (direct binary mode)
-                        # Some clients might read bytes directly rather than parsing text
-                        debug_response = debug_server_key.encode('ascii')
+                    # Use the exact format from the error logs
+                    # Fixed response without final empty line
+                    debug_response = f"LEN={debug_key_len}\r\nKEY={debug_server_key}\r\n".encode('ascii')
+                    
+                    # Alternative format specifically for this client type
+                    if needs_special_format:
+                        # Try with DOS-style CRLF and explicit key ordering
+                        debug_response = f"KEY={debug_server_key}\r\nLEN={debug_key_len}\r\n".encode('ascii')
+                        logger.info(f"Using special format for client {conn.client_host} with KEY first")
                     
                     # Override all previous settings
-                    logger.info(f"!!! USING FIXED DEBUG RESPONSE MODE {DEBUG_MODE}: {repr(debug_response)} !!!")
+                    logger.info(f"!!! USING FIXED DEBUG RESPONSE: {repr(debug_response)} !!!")
                     conn.server_key = debug_server_key
                     conn.key_length = debug_key_len
                     
