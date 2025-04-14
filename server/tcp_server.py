@@ -273,47 +273,40 @@ class TCPServer:
                             if USE_FIXED_DEBUG_RESPONSE and command.startswith('INIT'):
                                 # Force the exact format that would be read properly by Delphi client
                                 # Format based on the server logs error messages
-                                raw_response = f"LEN={conn.key_length}\r\nKEY={conn.server_key}\r\n".encode('ascii')
                                 
-                                # Try a completely different approach: Delphi TStringList serialization format
-                                # This is how Delphi's SaveToStream/LoadFromStream works with TStringList
-                                # First byte is the count of strings, followed by each string with length prefix
-                                # Since we have exactly 2 strings, we'll use count=2
+                                # Reset to the absolute simplest format
+                                # Use fixed key with known working values
+                                debug_server_key = "ABCDEFGH"  # Exactly 8 characters length
+                                debug_key_len = len(debug_server_key)
                                 
-                                # Format each string as length-prefixed
-                                len_str = f"LEN={conn.key_length}"
-                                key_str = f"KEY={conn.server_key}"
+                                # Use the absolute simplest format possible
+                                # Send in raw ASCII bytes with CRLF line endings
+                                # No serialization, no binary format, just plain text
+                                plain_response = f"LEN={debug_key_len}\r\nKEY={debug_server_key}\r\n".encode('ascii')
                                 
-                                # Construct serialized format bytes manually
-                                # First the count as a single byte (2 strings)
-                                count_byte = bytes([2])
+                                logger.info(f"!!RETURNING TO BASIC FORMAT: {repr(plain_response)}!!")
+                                logger.info(f"Raw bytes: {' '.join([f'{b:02x}' for b in plain_response])}")
                                 
-                                # Then the first string with length prefix
-                                len_str_bytes = len_str.encode('ascii')
-                                len_str_len = len(len_str_bytes)
-                                len_prefix1 = len_str_len.to_bytes(4, byteorder='little')
+                                # No modification at all, just use exactly what worked before
+                                response = plain_response
                                 
-                                # Then the second string with length prefix
-                                key_str_bytes = key_str.encode('ascii')
-                                key_str_len = len(key_str_bytes)
-                                len_prefix2 = key_str_len.to_bytes(4, byteorder='little')
+                                # Override all previous settings
+                                conn.server_key = debug_server_key
+                                conn.key_length = debug_key_len
                                 
-                                # Combine all parts
-                                delphi_format = count_byte + len_prefix1 + len_str_bytes + len_prefix2 + key_str_bytes
+                                # Recalculate the crypto key using fixed values
+                                dict_entry = CRYPTO_DICTIONARY[int(params['ID']) - 1]
+                                crypto_dict_part = dict_entry[:debug_key_len]
+                                host_first_chars = conn.client_host[:2]
+                                orig_host_last_char = conn.client_host[-1:]
+                                conn.crypto_key = debug_server_key + crypto_dict_part + host_first_chars + orig_host_last_char
                                 
-                                logger.info(f"!!TESTING DELPHI TSTRINGLIST SERIALIZATION FORMAT: {repr(delphi_format)}!!")
+                                logger.info(f"DEBUG MODE: Using fixed crypto key: {conn.crypto_key}")
                                 
-                                # Detailed binary byte-by-byte logging
-                                byte_details = []
-                                for i, b in enumerate(delphi_format):
-                                    byte_details.append(f"{i}:{b:02x}")
-                                logger.info(f"Binary bytes: {' '.join(byte_details)}")
-                                
-                                # Also log a more readable version
-                                logger.info(f"Serialized TStringList: count=2, strings=['{len_str}', '{key_str}']")
-                                
-                                # Don't apply any normalization
-                                response = delphi_format
+                                # Test that encryption works with this key
+                                logger.info("DEBUG MODE: Testing encryption with fixed key...")
+                                test_result = conn.test_encryption()
+                                logger.info(f"DEBUG MODE: Encryption test result: {test_result}")
                             
                             # Double check the final response
                             logger.info(f"Final normalized response: {repr(response)}")
