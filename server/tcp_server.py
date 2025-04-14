@@ -211,6 +211,16 @@ class TCPServer:
         logger.debug(f"TCP connection details: local={writer.get_extra_info('sockname')}, remote={peer}")
         logger.debug(f"TCP socket options: keepalive={writer.get_extra_info('socket').getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE)}")
         
+        # Log more detailed socket information
+        try:
+            socket_obj = writer.get_extra_info('socket')
+            if socket_obj:
+                logger.debug(f"Socket type: {socket_obj.type}, family: {socket_obj.family}")
+                logger.debug(f"Socket timeout: {socket_obj.gettimeout()}")
+                logger.debug(f"Socket blocking mode: {socket_obj.getblocking()}")
+        except Exception as e:
+            logger.debug(f"Error getting socket details: {e}")
+        
         # Add to pending connections list until we get a client ID
         self.pending_connections.append(conn)
         
@@ -250,6 +260,14 @@ class TCPServer:
                             
                             # Log exact response content for debugging
                             logger.debug(f"INIT response string representation: {response!r}")
+                            
+                            # Ensure we have proper CRLF for Delphi client
+                            if isinstance(response, str):
+                                response = response.replace('\n', '\r\n').encode('ascii')
+                            elif isinstance(response, bytes):
+                                # Convert to string, normalize line endings, then back to bytes
+                                response_str = response.decode('ascii', errors='replace')
+                                response = response_str.replace('\n', '\r\n').encode('ascii')
                             
                             # Send exactly as is without any modifications
                             writer.write(response)
@@ -466,8 +484,13 @@ class TCPServer:
                 except Exception as e:
                     logger.error(f"Error during crypto validation: {e}")
                 
-                # Конструираме отговор в правилния формат, който клиента очаква
-                response_text = f"200 OK\r\nLEN={key_len}\r\nKEY={server_key}\r\n\r\n"
+                # Конструираме отговор в точния формат, който Delphi TStringList очаква
+                # Just key=value pairs on separate lines, without any status code
+                response_lines = [
+                    f"KEY={server_key}",
+                    f"LEN={key_len}"
+                ]
+                response_text = "\r\n".join(response_lines) + "\r\n"
                 response = response_text.encode('ascii')
                 
                 # Логваме отговора
@@ -516,7 +539,11 @@ class TCPServer:
                     logger.error(f"Client ID from command: {client_id_value}")
                     
                     # Build a suggested fixed response for clients with this error
-                    suggested_response = f"200 OK\r\nLEN={conn.key_length}\r\nKEY={conn.server_key}\r\n\r\n"
+                    response_lines = [
+                        f"KEY={conn.server_key}",
+                        f"LEN={conn.key_length}"
+                    ]
+                    suggested_response = "\r\n".join(response_lines) + "\r\n"
                     logger.error(f"Suggested corrected response format: '{suggested_response}'")
                     
                     # Подробна информация за последния работещ тест на криптирането
@@ -554,7 +581,7 @@ class TCPServer:
                         logger.error(f"  host chars: {host_chars}")
                         
                     # Покажи INIT отговора за дебъг
-                    logger.error(f"INIT отговор формат: '200 OK\\r\\nLEN={conn.key_length}\\r\\nKEY={conn.server_key}\\r\\n\\r\\n'")
+                    logger.error(f"INIT отговор формат: 'KEY={conn.server_key}\\r\\nLEN={conn.key_length}\\r\\n'")
                 
                 return b'OK'
                 
