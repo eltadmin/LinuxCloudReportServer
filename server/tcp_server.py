@@ -300,7 +300,8 @@ class TCPServer:
                 
                 # Generate crypto key
                 # The key length is used to determine how many characters to take from the dictionary entry
-                key_len = random.randint(1, 12)
+                # Ensure key length is at least 4 for better security
+                key_len = random.randint(4, 10)  # Changed from random.randint(1, 12)
                 server_key = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
                 
                 # Store crypto key components
@@ -341,6 +342,7 @@ class TCPServer:
                 
                 # Log the exact byte-level response for debugging
                 logger.info(f"INIT response (exact format): status=200, LEN={key_len}, KEY={server_key}")
+                logger.info(f"INIT raw response bytes: {' '.join([f'{b:02x}' for b in response])}")
                 return response
                 
             elif cmd == 'ERRL':
