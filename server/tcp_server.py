@@ -439,8 +439,35 @@ class TCPServer:
                 conn.crypto_key = working_key
                 logger.info(f"Using crypto key: {working_key} ({working_key_desc})")
                 
-                # Конструираме по-прост отговор, базиран на Delphi TStrings формат
-                response_text = f"KEY={server_key}\r\nLEN={key_len}\r\n\r\n"
+                # Verify crypto key with more thorough testing
+                logger.info(f"Running thorough crypto key verification tests...")
+                try:
+                    # Test multiple strings with different lengths and characters
+                    test_strings = ["test", "TT=Test", "1234567890", "абвгдежзий", "Test string with spaces"]
+                    all_tests_passed = True
+                    
+                    for test_str in test_strings:
+                        try:
+                            encrypted = conn.encrypt_data(test_str)
+                            decrypted = conn.decrypt_data(encrypted)
+                            if decrypted != test_str:
+                                logger.warning(f"Crypto test failed for string: '{test_str}' -> '{decrypted}'")
+                                all_tests_passed = False
+                            else:
+                                logger.debug(f"Crypto test passed for string: '{test_str}'")
+                        except Exception as e:
+                            logger.warning(f"Crypto test exception for string: '{test_str}': {e}")
+                            all_tests_passed = False
+                    
+                    if all_tests_passed:
+                        logger.info("All crypto validation tests passed successfully!")
+                    else:
+                        logger.warning("Some crypto validation tests failed - communication may be unstable")
+                except Exception as e:
+                    logger.error(f"Error during crypto validation: {e}")
+                
+                # Конструираме отговор в правилния формат, който клиента очаква
+                response_text = f"200 OK\r\nLEN={key_len}\r\nKEY={server_key}\r\n\r\n"
                 response = response_text.encode('ascii')
                 
                 # Логваме отговора
@@ -480,6 +507,17 @@ class TCPServer:
                     logger.error("Анализ: Проблем с форматирането на INIT отговора или неправилен криптиращ ключ.")
                     logger.error(f"INIT параметри: ID={conn.client_id}, host={conn.client_host}")
                     logger.error(f"Изпратен ключ: {conn.server_key}, дължина: {conn.key_length}")
+                    
+                    # Log previous communication data
+                    logger.error("===== Last Client-Server Communication =====")
+                    # Find client ID in the command if possible for better error tracking
+                    client_id_match = re.search(r'ID=(\w+)', command)
+                    client_id_value = client_id_match.group(1) if client_id_match else 'unknown'
+                    logger.error(f"Client ID from command: {client_id_value}")
+                    
+                    # Build a suggested fixed response for clients with this error
+                    suggested_response = f"200 OK\r\nLEN={conn.key_length}\r\nKEY={conn.server_key}\r\n\r\n"
+                    logger.error(f"Suggested corrected response format: '{suggested_response}'")
                     
                     # Подробна информация за последния работещ тест на криптирането
                     logger.error(f"Последен успешен тест на криптирането със сървърски ключ: {conn.crypto_key}")
