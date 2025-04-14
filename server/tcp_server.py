@@ -32,7 +32,7 @@ class TCPConnection:
         self.last_error = None
         self.last_activity = datetime.now()
         self.connection_time = datetime.now()
-        self.alt_crypto_keys = []
+        self.alt_crypto_keys = []  # Keep this for backward compatibility
 
     def encrypt_data(self, data):
         """Encrypts data using the crypto key"""
@@ -75,9 +75,9 @@ class TCPConnection:
             return False
             
         try:
-            # Use ASCII test string that doesn't include Cyrillic characters
-            # The client uses "ТТ=Test" but for our test we'll use ASCII only
-            test_string = "Test=1234"
+            # Use a simpler test string with just ASCII characters
+            # This reduces encoding issues that might occur with Cyrillic
+            test_string = "Test123"
             logger.debug(f"Testing encryption with key '{self.crypto_key}' and test string '{test_string}'")
             
             # Try to encrypt and then decrypt the test string
@@ -350,56 +350,28 @@ class TCPServer:
                 
                 # Generate crypto key
                 # Use fixed length of 8 for better compatibility
-                key_len = 8  # Changed from random.randint(4, 10)
+                key_len = 8  # Fixed length for reliability
                 server_key = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
                 
                 # Store crypto key components
                 conn.server_key = server_key
                 conn.key_length = key_len
                 
-                # IMPORTANT: Use only a portion of the dictionary entry based on key_len
-                # This is critical for compatibility with the Delphi client
+                # Use the dictionary entry based on key_id
                 dict_entry = CRYPTO_DICTIONARY[key_id - 1]
-                logger.debug(f"Full dictionary entry for key_id={key_id}: '{dict_entry}'")
                 
-                # Match Delphi Copy() function behavior EXACTLY
-                # In Delphi, Copy(str, 1, len) extracts len characters starting from position 1 (1-indexed)
-                crypto_dict_part = dict_entry[:key_len]  # This is equivalent to Copy(dict_entry, 1, key_len)
-                logger.debug(f"Truncated dictionary part (length={key_len}): '{crypto_dict_part}'")
+                # Take exactly key_len characters from dictionary entry
+                crypto_dict_part = dict_entry[:key_len]  
                 
-                # Match Delphi's Copy() function for extracting host parts
-                # The original code does: Copy(FHostName, 1, 2) + Copy(FHostName, Length(FHostName), 1)
+                # Extract host parts exactly as Delphi does:
+                # First 2 chars + Last char
                 host_first_chars = conn.client_host[:2]  # First 2 chars
-                
-                # For the last character, be careful with empty strings
-                if len(conn.client_host) > 0:
-                    host_last_char = conn.client_host[-1:]  # Last char
-                else:
-                    host_last_char = ""
-                
+                host_last_char = conn.client_host[-1:] if conn.client_host else ""  # Last char
                 host_part = host_first_chars + host_last_char
-                logger.debug(f"Host part from '{conn.client_host}': '{host_part}' (first={host_first_chars}, last={host_last_char})")
                 
-                # Standard key construction: server_key + dict_part + host_part
-                # This matches EXACTLY what the Delphi client does:
-                # CryptoKey_ := FTCPClient.LastCmdResult.Text.Values['KEY'] +
-                #               Copy(C_CryptoDictionary[Key], 1, Len) +
-                #               Copy(FHostName, 1, 2) + Copy(FHostName, Length(FHostName), 1);
+                # Construct the crypto key:
+                # server_key + dict_part + host_part
                 conn.crypto_key = server_key + crypto_dict_part + host_part
-                logger.debug(f"Final combined crypto key: '{conn.crypto_key}'")
-                
-                # Log alternative key constructions for debugging
-                alt_key_1 = crypto_dict_part + server_key + host_part
-                logger.debug(f"Alternative key 1 (dict+server+host): '{alt_key_1}'")
-                
-                alt_key_2 = server_key[::-1] + crypto_dict_part + host_part
-                logger.debug(f"Alternative key 2 (reversed server + dict + host): '{alt_key_2}'")
-                
-                alt_key_3 = crypto_dict_part + host_part + server_key
-                logger.debug(f"Alternative key 3 (dict + host + server): '{alt_key_3}'")
-                
-                # Store alternative keys for possible later use
-                conn.alt_crypto_keys = [alt_key_1, alt_key_2, alt_key_3]
                 
                 logger.info(f"Generated crypto key: server_key={server_key}, length={key_len}, full_key={conn.crypto_key}")
                 logger.info(f"Crypto key components: dict_part='{crypto_dict_part}', host_part='{host_part}', key_id={key_id}")
@@ -410,22 +382,6 @@ class TCPServer:
                 else:
                     logger.warning(f"Encryption test failed: {conn.last_error}")
                     
-                    # Try alternative keys
-                    for i, alt_key in enumerate(conn.alt_crypto_keys):
-                        logger.info(f"Testing alternative key {i+1}")
-                        # Save original key to restore if needed
-                        original_key = conn.crypto_key
-                        
-                        # Try with alternative key
-                        conn.crypto_key = alt_key
-                        if conn.test_encryption():
-                            logger.info(f"Alternative key {i+1} passed encryption test!")
-                            break
-                        else:
-                            logger.warning(f"Alternative key {i+1} failed: {conn.last_error}")
-                            # Restore original key
-                            conn.crypto_key = original_key
-                
                 # Mark connection as authenticated
                 conn.authenticated = True
                 logger.info(f"Connection authenticated for client {peer}")
@@ -444,9 +400,6 @@ class TCPServer:
                 response = status_line
                 response += b"LEN=" + str(key_len).encode('ascii') + b"\r\n"
                 response += b"KEY=" + server_key.encode('ascii') + b"\r\n"
-                
-                # Try adding an extra newline at the end (Delphi might expect this exact format)
-                response += b"\r\n"  # Blank line at the end
                 
                 # Try logging the raw byte representation of the response for better debugging
                 logger.debug(f"Response raw bytes: {response!r}")
@@ -481,127 +434,44 @@ class TCPServer:
                 logger.debug(f"Received encrypted data: {encrypted_data}")
                 logger.info(f"Using crypto key for INFO command: '{conn.crypto_key}'")
                 
-                # Try to decrypt with primary key first
+                # Try to decrypt the data
                 decrypted_data = conn.decrypt_data(encrypted_data)
                 if not decrypted_data:
-                    logger.warning(f"Primary key decryption failed: {conn.last_error}")
+                    logger.error(f"Decryption failed: {conn.last_error}")
+                    return b'ERROR Decryption failed'
+                
+                logger.info(f"Decrypted INFO data: {decrypted_data}")
+                
+                # Parse client info from decrypted data
+                try:
+                    # Parse decrypted data as key=value pairs
+                    info = {}
+                    for pair in decrypted_data.split('\n'):
+                        if '=' in pair:
+                            key, value = pair.split('=', 1)
+                            info[key.strip()] = value.strip()
                     
-                    # Try alternative keys if available
-                    if hasattr(conn, 'alt_crypto_keys') and conn.alt_crypto_keys:
-                        for i, alt_key in enumerate(conn.alt_crypto_keys):
-                            logger.info(f"Trying alternative key {i+1}: '{alt_key}'")
-                            
-                            # Create a temporary DataCompressor with the alternative key
-                            from .crypto import DataCompressor
-                            temp_compressor = DataCompressor(alt_key)
-                            
-                            try:
-                                alt_decrypted = temp_compressor.decompress_data(encrypted_data)
-                                if alt_decrypted:
-                                    logger.info(f"Alternative key {i+1} worked! Switching to this key. Decrypted: '{alt_decrypted}'")
-                                    conn.crypto_key = alt_key  # Update the connection's crypto key
-                                    decrypted_data = alt_decrypted
-                                    break
-                            except Exception as e:
-                                logger.debug(f"Alternative key {i+1} failed: {e}")
-                
-                if not decrypted_data:
-                    logger.error(f"Failed to decrypt data with any key: {conn.last_error}")
-                    return f'ERROR Failed to decrypt data: {conn.last_error}'.encode('utf-8')
-                
-                logger.info(f"Successfully decrypted INFO data: '{decrypted_data}'")
-                
-                # Parse data as key-value pairs
-                data_pairs = {}
-                for line in decrypted_data.splitlines():
-                    if '=' in line:
-                        key, value = line.split('=', 1)
-                        data_pairs[key] = value
+                    logger.info(f"Parsed client info: {info}")
+                    
+                    # Store client ID
+                    if 'ID' in info:
+                        conn.client_id = info['ID']
+                        logger.info(f"Client ID is set to {conn.client_id}")
                         
-                logger.debug(f"Parsed INFO key-value pairs: {data_pairs}")
-                
-                # Validate data
-                if 'ТТ' not in data_pairs or data_pairs['ТТ'] != 'Test':
-                    logger.warning("Standard Cyrillic validation 'ТТ=Test' failed")
-                    
-                    # Try alternative validation methods - this is more permissive and handles encoding issues
-                    test_key_present = False
-                    test_value_valid = False
-                    
-                    # Check for any key that might be 'ТТ' with different encodings
-                    for key, value in data_pairs.items():
-                        logger.debug(f"Checking key-value pair: '{key}'='{value}'")
+                        # Add to authenticated connections and remove from pending
+                        self.connections[conn.client_id] = conn
+                        if conn in self.pending_connections:
+                            self.pending_connections.remove(conn)
                         
-                        # Check if key looks like 'TT' or 'ТТ' or variations
-                        if (key == 'ТТ' or key == 'TT' or 
-                            key == 'Test' or key == 'TEST' or 
-                            key == 'тт' or key == 'tt'):
-                            test_key_present = True
-                            
-                            # Check if value is 'Test' or similar
-                            if (value == 'Test' or value == 'test' or 
-                                value == '1' or value == 'true' or 
-                                value == 'True'):
-                                test_value_valid = True
-                                break
-                    
-                    # Also check for any value that might be 'Test'
-                    if not test_value_valid:
-                        for key, value in data_pairs.items():
-                            if value.lower() == 'test':
-                                test_value_valid = True
-                                break
-                                
-                    # If still not found, but we have 'ID' field, assume it's valid
-                    if not (test_key_present and test_value_valid) and 'ID' in data_pairs:
-                        logger.warning("Validation field not found but ID is present, continuing anyway")
-                        test_key_present = test_value_valid = True
-                    
-                    # Final validation check
-                    if not (test_key_present and test_value_valid):
-                        logger.error("Decryption problem - validation failed after retrying alternative methods")
-                        return b'ERROR Decryption validation failed'
+                        # Return success
+                        return b'OK'
                     else:
-                        logger.info("Validation succeeded with alternative method")
-                
-                # Store client information
-                client_id = data_pairs.get('ID', '')
-                if not client_id:
-                    logger.error("Missing client ID in INFO data")
-                    return b'ERROR Missing client ID'
-                
-                conn.client_id = client_id
-                
-                # Check for duplicate client ID
-                self.check_duplicate_client_id(client_id, conn)
-                
-                # Remove from pending connections list if present
-                if conn in self.pending_connections:
-                    self.pending_connections.remove(conn)
-                
-                # Create response data
-                response_data = {
-                    'ID': conn.client_id,
-                    'EX': (datetime.now() + timedelta(days=365)).strftime('%y%m%d'),
-                    'EN': 'True',
-                    'CD': datetime.now().strftime('%y%m%d'),
-                    'CT': datetime.now().strftime('%H%M%S')
-                }
-                
-                # Convert response to string
-                response_text = '\n'.join([f"{k}={v}" for k, v in response_data.items()])
-                
-                # Encrypt response
-                encrypted_response = conn.encrypt_data(response_text)
-                if not encrypted_response:
-                    logger.error(f"Failed to encrypt response: {conn.last_error}")
-                    return f'ERROR Failed to encrypt response: {conn.last_error}'.encode('utf-8')
-                
-                # Save connection in connections dictionary
-                self.connections[conn.client_id] = conn
-                
-                # Return response
-                return f'200 OK\r\nDATA={encrypted_response}\r\n\r\n'.encode('utf-8')
+                        logger.error("Missing client ID in INFO data")
+                        return b'ERROR Missing client ID'
+                    
+                except Exception as e:
+                    logger.error(f"Error parsing INFO data: {e}", exc_info=True)
+                    return f'ERROR {str(e)}'.encode('utf-8')
                 
             elif cmd == 'VERS':
                 # Handle version check and updates list
