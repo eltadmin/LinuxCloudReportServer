@@ -309,9 +309,17 @@ class TCPServer:
                 
                 # IMPORTANT: Use only a portion of the dictionary entry based on key_len
                 # This is critical for compatibility with the Delphi client
-                crypto_dict_part = CRYPTO_DICTIONARY[key_id - 1][:key_len]  # Use only first key_len characters
+                dict_entry = CRYPTO_DICTIONARY[key_id - 1]
+                logger.debug(f"Full dictionary entry for key_id={key_id}: '{dict_entry}'")
+                
+                crypto_dict_part = dict_entry[:key_len]  # Use only first key_len characters
+                logger.debug(f"Truncated dictionary part (length={key_len}): '{crypto_dict_part}'")
+                
                 host_part = conn.client_host[:2] + conn.client_host[-1:]
+                logger.debug(f"Host part from '{conn.client_host}': '{host_part}'")
+                
                 conn.crypto_key = server_key + crypto_dict_part + host_part
+                logger.debug(f"Final combined crypto key: '{conn.crypto_key}'")
                 
                 logger.info(f"Generated crypto key: server_key={server_key}, length={key_len}, full_key={conn.crypto_key}")
                 logger.info(f"Crypto key components: dict_part='{crypto_dict_part}', host_part='{host_part}', key_id={key_id}")
