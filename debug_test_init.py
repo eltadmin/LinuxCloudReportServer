@@ -1,101 +1,138 @@
 #!/usr/bin/env python3
 """
-Debug tool to test INIT command processing for the Delphi client
+Simple TCP server for debugging INIT responses with Delphi clients.
+This server will respond to INIT commands with different formats to see which one works.
 """
-import socket
-import time
-import random
-import string
-from pathlib import Path
 
-# Copy of the constants to make this script standalone
-CRYPTO_DICTIONARY = [
-    '123hk12h8dcal',
-    'FT676Ugug6sFa',
-    'a6xbBa7A8a9la',
-    'qMnxbtyTFvcqi',
-    'cx7812vcxFRCC',
-    'bab7u682ftysv',
-    'YGbsux&Ygsyxg',  # This must match exactly what the client expects
-    'MSN><hu8asG&&',
-    '23yY88syHXvvs',
-    '987sX&sysy891'
+import asyncio
+import logging
+import sys
+import os
+import time
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger("debug_init")
+
+VERSIONS = [
+    # Version 1: Basic format
+    b"200 OK\r\nLEN=8\r\nKEY=DebugKey\r\n\r\n",
+    
+    # Version 2: No empty line at end
+    b"200 OK\r\nLEN=8\r\nKEY=DebugKey\r\n",
+    
+    # Version 3: Different line endings - LF only
+    b"200 OK\nLEN=8\nKEY=DebugKey\n\n",
+    
+    # Version 4: Different line endings - mixed
+    b"200 OK\r\nLEN=8\nKEY=DebugKey\r\n\n",
+    
+    # Version 5: Adding spaces between key-value
+    b"200 OK\r\nLEN = 8\r\nKEY = DebugKey\r\n\r\n",
+    
+    # Version 6: With content-length
+    b"200 OK\r\nContent-Length: 28\r\nLEN=8\r\nKEY=DebugKey\r\n\r\n",
+    
+    # Version 7: TStrings format (explicit name-value pairs)
+    b"LEN=8\r\nKEY=DebugKey\r\n\r\n",
+    
+    # Version 8: HTTP-like with status line 
+    b"HTTP/1.1 200 OK\r\nLEN=8\r\nKEY=DebugKey\r\n\r\n",
+    
+    # Version 9: Completely different format
+    b"OK LEN=8 KEY=DebugKey\r\n\r\n"
 ]
 
-def create_test_init_response(key_id, client_host):
-    """Create a test INIT response with exact format Delphi expects"""
-    # Generate the same server key for testing consistency
-    key_len = 12  # Fixed for testing
-    server_key = "TestKey12"  # Fixed for testing
-    
-    # Calculate the full crypto key
-    crypto_dict_part = CRYPTO_DICTIONARY[key_id - 1][:key_len]
-    host_part = client_host[:2] + client_host[-1:]
-    full_key = server_key + crypto_dict_part + host_part
-    
-    print(f"Generated key components:")
-    print(f"  server_key: {server_key}")
-    print(f"  key_length: {key_len}")
-    print(f"  dictionary entry[{key_id}]: {CRYPTO_DICTIONARY[key_id - 1]}")
-    print(f"  crypto_dict_part: {crypto_dict_part}")
-    print(f"  host_part: {host_part}")
-    print(f"  full_key: {full_key}")
-    
-    # Format the response exactly as the Delphi client expects
-    status_line = b"200 OK\r\n"
-    response = status_line
-    response += b"LEN=" + str(key_len).encode('ascii') + b"\r\n"
-    response += b"KEY=" + server_key.encode('ascii') + b"\r\n"
-    response += b"\r\n"  # Blank line at the end
-    
-    # Display the raw bytes for debugging
-    print("\nRaw response bytes:")
-    print(' '.join([f'{b:02x}' for b in response]))
-    
-    return response
+# Current version being tested
+CURRENT_VERSION = int(os.environ.get("DEBUG_VERSION", "1"))
 
-def run_test_server():
-    """Run a simple test server that responds with a fixed INIT response"""
-    host = '0.0.0.0'
-    port = 8016
-    
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind((host, port))
-        s.listen()
-        print(f"Test server listening on {host}:{port}")
+def get_test_response():
+    """Create a test INIT response with exact format Delphi expects"""
+    if CURRENT_VERSION > len(VERSIONS):
+        logger.warning(f"Invalid version {CURRENT_VERSION}, using version 1")
+        CURRENT_VERSION = 1
         
+    logger.info(f"Using test response version {CURRENT_VERSION}")
+    logger.info(f"Response content: {VERSIONS[CURRENT_VERSION-1]}")
+    logger.info(f"Response hex: {' '.join([f'{b:02x}' for b in VERSIONS[CURRENT_VERSION-1]])}")
+    
+    return VERSIONS[CURRENT_VERSION-1]
+
+async def handle_client(reader, writer):
+    """Handle TCP connection - respond to INIT with test response"""
+    addr = writer.get_extra_info('peername')
+    logger.info(f"Connection from {addr}")
+    
+    try:
         while True:
-            conn, addr = s.accept()
-            with conn:
-                print(f"Connection from {addr}")
-                data = conn.recv(1024)
-                if not data:
-                    continue
+            data = await reader.readuntil(b'\n')
+            cmd = data.decode().strip()
+            logger.info(f"Received from {addr}: {cmd}")
+            
+            if cmd.startswith("INIT"):
+                # Extract ID from INIT command
+                key_id = None
+                for part in cmd.split():
+                    if part.startswith("ID="):
+                        key_id = part.split("=")[1]
+                        break
+                        
+                logger.info(f"Received INIT with ID={key_id}")
                 
-                cmd = data.decode('ascii').strip()
-                print(f"Received: {cmd}")
+                # Send test response
+                response = get_test_response()
+                logger.info(f"Sending response: {response}")
+                writer.write(response)
+                await writer.drain()
                 
-                if cmd.startswith('INIT'):
-                    # Parse the INIT command
-                    parts = cmd.split(' ')
-                    params = {}
-                    for part in parts[1:]:
-                        if '=' in part:
-                            key, value = part.split('=', 1)
-                            params[key] = value
+                # Wait for client's next command
+                try:
+                    next_cmd = await asyncio.wait_for(reader.readuntil(b'\n'), timeout=5.0)
+                    logger.info(f"Client response: {next_cmd.decode().strip()}")
+                except asyncio.TimeoutError:
+                    logger.warning("No response from client within timeout")
+                    break
                     
-                    # Get key ID
-                    key_id = int(params.get('ID', '1'))
-                    client_host = params.get('HST', 'UNKNOWN')
-                    
-                    # Create response
-                    response = create_test_init_response(key_id, client_host)
-                    print(f"Sending response...")
-                    conn.sendall(response)
-                else:
-                    conn.sendall(b"ERROR Unknown command\r\n")
+            elif cmd.startswith("ERRL"):
+                logger.error(f"Client reported error: {cmd}")
+                writer.write(b"OK\r\n")
+                await writer.drain()
+                break
+                
+            else:
+                logger.info(f"Unknown command: {cmd}")
+                writer.write(b"ERROR Unknown command\r\n")
+                await writer.drain()
+    except asyncio.IncompleteReadError:
+        logger.info(f"Client {addr} disconnected")
+    except Exception as e:
+        logger.error(f"Error handling client: {e}", exc_info=True)
+    finally:
+        writer.close()
+        await writer.wait_closed()
+        logger.info(f"Connection closed for {addr}")
+
+async def run_server():
+    """Run a simple test server that responds with a fixed INIT response"""
+    server = await asyncio.start_server(
+        handle_client, '0.0.0.0', 8016
+    )
+    
+    addr = server.sockets[0].getsockname()
+    logger.info(f"Serving on {addr}")
+    
+    async with server:
+        await server.serve_forever()
 
 if __name__ == "__main__":
-    print("Starting test server for debugging INIT commands")
-    run_test_server() 
+    logger.info(f"Starting debug INIT test server with version {CURRENT_VERSION}")
+    try:
+        asyncio.run(run_server())
+    except KeyboardInterrupt:
+        logger.info("Server stopped by user") 

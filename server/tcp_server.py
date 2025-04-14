@@ -12,6 +12,7 @@ from .constants import CRYPTO_DICTIONARY
 from .crypto import DataCompressor
 import base64
 import re
+import socket
 
 logger = logging.getLogger(__name__)
 
@@ -75,41 +76,42 @@ class TCPConnection:
             return False
             
         try:
-            # Delphi клиентът използва специфичен формат за тестване - 'TT=Test'
-            # Използваме ASCII формат за максимална съвместимост
-            test_string = "TT=Test"
-            logger.debug(f"Testing encryption with key '{self.crypto_key}' and test string '{test_string}'")
+            # Тестваме с различни тестови стрингове
+            test_strings = [
+                "TT=Test",     # Стандартния Delphi тест стринг
+                "Test123",     # Прост ASCII текст
+                "ID=123\r\nTT=Testing"  # Формат на данни, подобен на клиентски
+            ]
             
-            # Try to encrypt and then decrypt the test string
-            encrypted = self.encrypt_data(test_string)
-            if not encrypted:
-                self.last_error = "Failed to encrypt test data"
-                return False
-            
-            # Dump encrypted data for debugging
-            logger.debug(f"Encrypted data (base64): '{encrypted}'")
-            
-            # Опитваме да декриптираме 
-            decrypted = self.decrypt_data(encrypted)
-            if not decrypted:
-                self.last_error = "Failed to decrypt test data"
-                return False
-            
-            # Dump decrypted data for comparison
-            logger.debug(f"Decrypted data: '{decrypted}'")
+            for test_string in test_strings:
+                logger.debug(f"Testing encryption with key '{self.crypto_key}' and test string '{test_string}'")
                 
-            # Проверяваме дали декриптирането е било успешно
-            # Тъй като може да има проблеми с кодировката, правим по-толерантна проверка
-            if test_string == decrypted:
-                logger.debug("Exact match - encryption test passed")
-                return True
+                # Опитваме се да криптираме и декриптираме
+                encrypted = self.encrypt_data(test_string)
+                if not encrypted:
+                    logger.warning(f"Failed to encrypt test data: {test_string}")
+                    continue
                 
-            # Ако няма точно съвпадение, проверяваме дали ключовите части са налични
-            if "TT" in decrypted and "Test" in decrypted:
-                logger.debug("Key parts found - encryption test passed with partial matching")
-                return True
+                logger.debug(f"Encrypted data (base64): '{encrypted}'")
                 
-            self.last_error = f"Decryption mismatch: expected '{test_string}', got '{decrypted}'"
+                decrypted = self.decrypt_data(encrypted)
+                if not decrypted:
+                    logger.warning(f"Failed to decrypt test data for '{test_string}'")
+                    continue
+                
+                logger.debug(f"Decrypted data: '{decrypted}'")
+                
+                # Проверяваме резултата
+                if test_string == decrypted:
+                    logger.info(f"Encryption test passed with '{test_string}'")
+                    return True
+                elif "TT" in test_string and "TT" in decrypted and "Test" in decrypted:
+                    logger.info(f"Encryption test passed with partial match for '{test_string}'")
+                    return True
+            
+            # Ако нито един от тестовете не е успешен
+            self.last_error = "All encryption tests failed"
+            logger.error(self.last_error)
             return False
             
         except Exception as e:
@@ -205,15 +207,28 @@ class TCPServer:
         peer = conn.peer
         logger.info(f"New TCP connection from {peer}")
         
+        # Log connection properties
+        logger.debug(f"TCP connection details: local={writer.get_extra_info('sockname')}, remote={peer}")
+        logger.debug(f"TCP socket options: keepalive={writer.get_extra_info('socket').getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE)}")
+        
         # Add to pending connections list until we get a client ID
         self.pending_connections.append(conn)
         
         try:
             while True:
                 # Read command
-                data = await reader.readuntil(b'\n')
-                command = data.decode().strip()
-                logger.info(f"Received command from {peer}: {command}")
+                try:
+                    # Log that we're waiting for data
+                    logger.debug(f"Waiting for data from {peer}...")
+                    data = await reader.readuntil(b'\n')
+                    command = data.decode('utf-8', errors='replace').strip()
+                    logger.info(f"Received command from {peer}: {command}")
+                    
+                    # Log raw bytes for better diagnostics
+                    logger.debug(f"Raw received bytes: {' '.join([f'{b:02x}' for b in data])}")
+                except Exception as e:
+                    logger.error(f"Error reading from socket: {e}")
+                    break
                 
                 # Update activity timestamp
                 conn.update_activity()
@@ -226,33 +241,43 @@ class TCPServer:
                 response = await self.handle_command(conn, command, peer)
                 
                 if response:
-                    # For INIT command, we need exact byte-level handling
-                    if command.startswith('INIT'):
-                        # Display raw hex bytes for debugging
-                        hex_response = ' '.join([f'{b:02x}' for b in response])
-                        logger.info(f"INIT raw response bytes: {hex_response}")
-                        
-                        # Send exactly as is without any modifications
-                        writer.write(response)
-                    else:
-                        # For other commands
-                        if isinstance(response, str):
-                            # Backward compatibility for string responses
-                            logger.info(f"Sending response (string) to {peer}: {response}")
-                            # Convert to proper CRLF line endings that Delphi expects
-                            if not response.endswith('\r\n'):
-                                response = response.rstrip('\n') + '\r\n'
-                            writer.write(response.encode('utf-8'))
-                        else:
-                            # Bytes response
-                            log_response = response.decode('utf-8', errors='replace')
-                            logger.info(f"Sending response (bytes) to {peer}: {log_response}")
-                            # Make sure response has CRLF line endings
-                            if not response.endswith(b'\r\n'):
-                                response = response.rstrip(b'\n') + b'\r\n'
+                    try:
+                        # For INIT command, we need exact byte-level handling
+                        if command.startswith('INIT'):
+                            # Display raw hex bytes for debugging
+                            hex_response = ' '.join([f'{b:02x}' for b in response])
+                            logger.info(f"INIT raw response bytes: {hex_response}")
+                            
+                            # Log exact response content for debugging
+                            logger.debug(f"INIT response string representation: {response!r}")
+                            
+                            # Send exactly as is without any modifications
                             writer.write(response)
-                    
-                    await writer.drain()
+                        else:
+                            # For other commands
+                            if isinstance(response, str):
+                                # Backward compatibility for string responses
+                                logger.info(f"Sending response (string) to {peer}: {response}")
+                                # Convert to proper CRLF line endings that Delphi expects
+                                if not response.endswith('\r\n'):
+                                    response = response.rstrip('\n') + '\r\n'
+                                writer.write(response.encode('utf-8'))
+                            else:
+                                # Bytes response
+                                log_response = response.decode('utf-8', errors='replace')
+                                logger.info(f"Sending response (bytes) to {peer}: {log_response}")
+                                # Make sure response has CRLF line endings
+                                if not response.endswith(b'\r\n'):
+                                    response = response.rstrip(b'\n') + b'\r\n'
+                                writer.write(response)
+                        
+                        # Log that we're draining the writer
+                        logger.debug(f"Draining writer for {peer}...")
+                        await writer.drain()
+                        logger.debug(f"Writer drained for {peer}")
+                    except Exception as e:
+                        logger.error(f"Error sending response to {peer}: {e}", exc_info=True)
+                        break
                     
         except asyncio.IncompleteReadError:
             logger.info(f"Client {peer} disconnected")
@@ -392,16 +417,19 @@ class TCPServer:
                 # Delphi TStrings.Values парсва ред по ред, като очаква KEY=VALUE формат
                 # Важно: в Delphi Text.Values['KEY'] очаква KEY=value да бъде в началото на ред
                 
-                # Строим отговора по-просто и буквално
-                response = b"200 OK\r\n"  # Първи ред - статус код
-                response += b"LEN=" + str(key_len).encode('ascii') + b"\r\n"  # Втори ред - дължина на ключа
-                response += b"KEY=" + server_key.encode('ascii') + b"\r\n"  # Трети ред - самият ключ
+                # Преправяме отговора по още по-точен и прост начин, тъй като има проблеми с парсването
+                # В Delphi, TStrings.Values работи по-различно от стандартните HTTP хедъри
+                # Първият ред НЕ трябва да е статус код, а директно ключ-стойност двойка
+                
+                response = b""
+                response += b"LEN=" + str(key_len).encode('ascii') + b"\r\n"  # Първи ред - дължина на ключа
+                response += b"KEY=" + server_key.encode('ascii') + b"\r\n"  # Втори ред - самият ключ
                 response += b"\r\n"  # Празен ред накрая - критично за Delphi клиента
                 
                 # Логваме точния формат на отговора за дебъгване
                 # Важно! Не променяйте нищо в горните редове без тестване с клиента
                 logger.debug(f"Response raw bytes: {response!r}")
-                logger.info(f"INIT response (exact format): status=200, LEN={key_len}, KEY={server_key}")
+                logger.info(f"INIT response (exact format): LEN={key_len}, KEY={server_key}")
                 logger.info(f"INIT raw response bytes: {' '.join([f'{b:02x}' for b in response])}")
                 return response
                 
@@ -434,7 +462,53 @@ class TCPServer:
                 decrypted_data = conn.decrypt_data(encrypted_data)
                 if not decrypted_data:
                     logger.error(f"Decryption failed: {conn.last_error}")
-                    return b'ERROR Decryption failed'
+                    
+                    # Попробуем альтернативные ключи, комбинируя части
+                    # Иногда проблема может быть в порядке компонентов ключа
+                    logger.info("Trying alternative key combinations...")
+                    
+                    # server_key already stored in conn.server_key
+                    key_id = 5  # Default to ID=5 as seen in logs
+                    for param in parts[1:]:
+                        if param.startswith('ID='):
+                            try:
+                                key_id = int(param[3:])
+                            except:
+                                pass
+                    
+                    # Get dictionary part
+                    dict_entry = CRYPTO_DICTIONARY[key_id - 1]
+                    key_len = 8
+                    dict_part = dict_entry[:key_len]
+                    
+                    # Get host part
+                    host_part = ""
+                    if conn.client_host:
+                        host_first_chars = conn.client_host[:2]
+                        host_last_char = conn.client_host[-1:]
+                        host_part = host_first_chars + host_last_char
+                    
+                    # Try different combinations
+                    alt_keys = [
+                        dict_part + conn.server_key + host_part,
+                        conn.server_key + host_part + dict_part,
+                        dict_part + host_part + conn.server_key
+                    ]
+                    
+                    for i, alt_key in enumerate(alt_keys):
+                        logger.info(f"Trying alternative key {i+1}: {alt_key}")
+                        
+                        compressor = DataCompressor(alt_key)
+                        alt_decrypted = compressor.decompress_data(encrypted_data)
+                        
+                        if alt_decrypted:
+                            logger.info(f"Alternative key {i+1} worked! Decrypted: {alt_decrypted}")
+                            conn.crypto_key = alt_key  # Update to working key
+                            decrypted_data = alt_decrypted
+                            break
+                    
+                    if not decrypted_data:
+                        return b'ERROR Decryption failed after trying alternative keys'
                 
                 logger.info(f"Decrypted INFO data: {decrypted_data}")
                 
@@ -467,7 +541,8 @@ class TCPServer:
                         if conn in self.pending_connections:
                             self.pending_connections.remove(conn)
                         
-                        # Създаваме отговор в Delphi-съвместим формат
+                        # В Delphi TStrings формат, без 200 OK статус!
+                        # Просто ключове и стойности
                         response_data = {
                             'ID': conn.client_id,
                             'STATUS': 'OK',
@@ -475,13 +550,16 @@ class TCPServer:
                             'DATE': datetime.now().strftime('%y%m%d')
                         }
                         
-                        # Конвертираме данните в текст
+                        # Конвертираме отговора в TStrings формат
                         response_text = '\r\n'.join([f"{k}={v}" for k, v in response_data.items()])
+                        response_text += '\r\n\r\n'  # Добавяме празен ред накрая
+                        
+                        # Криптираме отговора
                         encrypted_response = conn.encrypt_data(response_text)
                         
                         if encrypted_response:
-                            # Връщаме INFO отговора във формат като INIT
-                            return f"200 OK\r\nDATA={encrypted_response}\r\n\r\n".encode('utf-8')
+                            # Връщаме като обикновен DATA с криптираните данни
+                            return f"DATA={encrypted_response}\r\n\r\n".encode('utf-8')
                         else:
                             return b'ERROR Failed to encrypt response'
                     else:

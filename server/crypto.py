@@ -105,29 +105,49 @@ class DataCompressor:
         """Compresses and encrypts data using the crypto key - matches Delphi implementation"""
         try:
             logger.debug(f"Starting compress_data with key '{self.original_key}', MD5 hash: {self.aes_key.hex()}")
-            logger.debug(f"Input data (length: {len(data)}): '{data}'")
+            logger.debug(f"Input data (length: {len(data)}): '{data[:100]}...' (truncated if long)")
             
             # 1. Convert string to bytes using appropriate encoding for Cyrillic
-            input_bytes = self._try_multiple_encodings(data)
-            logger.debug(f"Input bytes ({len(input_bytes)} bytes): {input_bytes.hex()[:60]}...")
+            try:
+                input_bytes = self._try_multiple_encodings(data)
+                logger.debug(f"Input bytes ({len(input_bytes)} bytes): {input_bytes[:30].hex()}...")
+            except Exception as e:
+                logger.error(f"Error converting string to bytes: {e}")
+                raise
             
             # 2. Compress data with zlib at level 6 (Delphi default)
-            compressed_data = zlib.compress(input_bytes, level=6)
-            logger.debug(f"Compressed data ({len(compressed_data)} bytes): {compressed_data.hex()[:60]}...")
+            try:
+                compressed_data = zlib.compress(input_bytes, level=6)
+                logger.debug(f"Compressed data ({len(compressed_data)} bytes): {compressed_data[:30].hex()}...")
+            except Exception as e:
+                logger.error(f"Error compressing data: {e}")
+                raise
             
             # 3. Ensure data is a multiple of the block size (similar to Delphi's StringStream behavior)
-            padded_data = self._ensure_block_size(compressed_data)
-            padding_added = len(padded_data) - len(compressed_data)
-            logger.debug(f"Padded data ({len(padded_data)} bytes, added {padding_added} bytes padding): {padded_data.hex()[:60]}...")
+            try:
+                padded_data = self._ensure_block_size(compressed_data)
+                padding_added = len(padded_data) - len(compressed_data)
+                logger.debug(f"Padded data ({len(padded_data)} bytes, added {padding_added} bytes padding): {padded_data[:30].hex()}...")
+            except Exception as e:
+                logger.error(f"Error padding data: {e}")
+                raise
             
             # 4. Encrypt with Rijndael (AES) using fixed IV
-            cipher = AES.new(self.aes_key, AES.MODE_CBC, self.iv)
-            encrypted_data = cipher.encrypt(padded_data)
-            logger.debug(f"Encrypted data ({len(encrypted_data)} bytes): {encrypted_data.hex()[:60]}...")
+            try:
+                cipher = AES.new(self.aes_key, AES.MODE_CBC, self.iv)
+                encrypted_data = cipher.encrypt(padded_data)
+                logger.debug(f"Encrypted data ({len(encrypted_data)} bytes): {encrypted_data[:30].hex()}...")
+            except Exception as e:
+                logger.error(f"Error encrypting data: {e}")
+                raise
             
             # 5. Base64 encode WITHOUT including IV - to match Delphi behavior
-            result = base64.b64encode(encrypted_data).decode('ascii')
-            logger.debug(f"Base64 result (length: {len(result)}): '{result[:60]}...'")
+            try:
+                result = base64.b64encode(encrypted_data).decode('ascii')
+                logger.debug(f"Base64 result (length: {len(result)}): '{result[:60]}...'")
+            except Exception as e:
+                logger.error(f"Error base64 encoding: {e}")
+                raise
             
             return result
             
@@ -146,53 +166,69 @@ class DataCompressor:
             # 1. Base64 decode
             try:
                 decoded = base64.b64decode(data)
-                logger.debug(f"Base64 decoded ({len(decoded)} bytes): {decoded.hex()[:60]}...")
+                logger.debug(f"Base64 decoded ({len(decoded)} bytes): {decoded[:30].hex()}...")
             except Exception as e:
                 logger.error(f"Base64 decoding failed: {e}")
-                raise
+                
+                # Try to fix common base64 padding issues
+                try:
+                    fixed_data = data
+                    if len(data) % 4 != 0:
+                        fixed_data = data + "=" * (4 - len(data) % 4)
+                        logger.debug(f"Fixed base64 padding: added {4 - len(data) % 4} padding characters")
+                    
+                    decoded = base64.b64decode(fixed_data)
+                    logger.debug(f"Base64 decoded after padding fix ({len(decoded)} bytes): {decoded[:30].hex()}...")
+                except Exception as e2:
+                    logger.error(f"Base64 decoding failed even after padding fix: {e2}")
+                    raise e  # Raise original error
             
             # 2. Decrypt with Rijndael (AES) using fixed IV
             try:
                 cipher = AES.new(self.aes_key, AES.MODE_CBC, self.iv)
                 decrypted = cipher.decrypt(decoded)
-                logger.debug(f"Decrypted data ({len(decrypted)} bytes): {decrypted.hex()[:60]}...")
+                logger.debug(f"Decrypted data ({len(decrypted)} bytes): {decrypted[:30].hex()}...")
             except Exception as e:
                 logger.error(f"AES decryption failed: {e}")
                 raise
             
             # 3. Decompress with zlib - let zlib handle trailing zeros
             try:
-                decompressed = zlib.decompress(decrypted)
-                logger.debug(f"Decompressed data ({len(decompressed)} bytes): {decompressed.hex()[:60]}...")
-            except zlib.error as e:
-                logger.warning(f"Initial zlib decompression failed: {e}")
-                # Try to find the actual compressed data by checking for zlib header
-                # (similar to how Delphi StringStream might behave)
-                zlib_header = b'\x78'  # Most zlib streams start with 0x78
-                if zlib_header in decrypted[:4]:
-                    pos = decrypted.find(zlib_header)
-                    if pos > -1:
-                        logger.debug(f"Found zlib header at position {pos}: {decrypted[pos:pos+4].hex()}")
-                        decrypted = decrypted[pos:]
-                        try:
-                            decompressed = zlib.decompress(decrypted)
-                            logger.debug(f"Decompressed after header fix ({len(decompressed)} bytes): {decompressed.hex()[:60]}...")
-                        except Exception as e:
-                            logger.error(f"Secondary decompression failed even after finding zlib header: {e}")
-                            raise
-                    else:
-                        raise
-                else:
-                    # Try removing trailing zeros (Delphi might add zeros for block alignment)
+                # First attempt direct decompression
+                try:
+                    decompressed = zlib.decompress(decrypted)
+                    logger.debug(f"Decompressed data directly ({len(decompressed)} bytes): {decompressed[:30].hex()}...")
+                except zlib.error as e:
+                    logger.warning(f"Direct zlib decompression failed: {e}")
+                    
+                    # Remove trailing zeros (Delphi might add zeros for block alignment)
+                    clean_data = decrypted.rstrip(b'\x00')
+                    logger.debug(f"Cleaned data ({len(clean_data)} bytes, removed {len(decrypted)-len(clean_data)} bytes): {clean_data[:30].hex()}...")
+                    
                     try:
-                        # Remove trailing zeros
-                        clean_data = decrypted.rstrip(b'\x00')
-                        logger.debug(f"Cleaned data ({len(clean_data)} bytes, removed {len(decrypted)-len(clean_data)} bytes): {clean_data.hex()[:60]}...")
                         decompressed = zlib.decompress(clean_data)
-                        logger.debug(f"Decompressed after cleaning ({len(decompressed)} bytes): {decompressed.hex()[:60]}...")
-                    except Exception as e:
-                        logger.error(f"Secondary decompression failed even after cleaning: {e}")
-                        raise
+                        logger.debug(f"Decompressed after cleaning ({len(decompressed)} bytes): {decompressed[:30].hex()}...")
+                    except zlib.error as e2:
+                        logger.warning(f"Decompression after cleaning failed: {e2}")
+                        
+                        # Try to find the zlib header (78 9C is common)
+                        try:
+                            # Try different starting points
+                            for i in range(min(16, len(clean_data))):
+                                try:
+                                    decompressed = zlib.decompress(clean_data[i:])
+                                    logger.debug(f"Decompressed after skip {i} bytes ({len(decompressed)} bytes): {decompressed[:30].hex()}...")
+                                    break
+                                except Exception:
+                                    continue
+                            else:
+                                raise e2  # Re-raise if all attempts failed
+                        except Exception as e3:
+                            logger.error(f"All decompression attempts failed: {e3}")
+                            raise e  # Raise original error
+            except Exception as e:
+                logger.error(f"Decompression failed: {e}")
+                raise
             
             # 4. Try different character encodings
             try:
