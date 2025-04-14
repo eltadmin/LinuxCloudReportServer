@@ -299,7 +299,6 @@ class TCPServer:
                 logger.info(f"Stored client info: host={conn.client_host}, type={conn.app_type}, version={conn.app_version}")
                 
                 # Generate crypto key
-                # The key length is used to determine how many characters to take from the dictionary entry
                 # Use fixed length of 8 for better compatibility
                 key_len = 8  # Changed from random.randint(4, 10)
                 server_key = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
@@ -308,12 +307,8 @@ class TCPServer:
                 conn.server_key = server_key
                 conn.key_length = key_len
                 
-                # In the original implementation, the full crypto key combines:
-                # 1. The server_key (random 8 chars)
-                # 2. A portion of the crypto dictionary entry for the given key_id
-                # 3. First 2 chars of client host + last char of client host
-                # This is crucial for the client to correctly compute the same key
-                crypto_dict_part = CRYPTO_DICTIONARY[key_id - 1][:key_len]
+                # Use full dictionary entry instead of truncating
+                crypto_dict_part = CRYPTO_DICTIONARY[key_id - 1]  # Changed from [:key_len]
                 host_part = conn.client_host[:2] + conn.client_host[-1:]
                 conn.crypto_key = server_key + crypto_dict_part + host_part
                 
