@@ -30,6 +30,7 @@ class TCPConnection:
         self.last_error = None
         self.last_activity = datetime.now()
         self.connection_time = datetime.now()
+        self.alt_crypto_keys = []
 
     def encrypt_data(self, data):
         """Encrypts data using the crypto key"""
@@ -64,6 +65,37 @@ class TCPConnection:
     def update_activity(self):
         """Update the last activity timestamp"""
         self.last_activity = datetime.now()
+        
+    def test_encryption(self):
+        """Test the encryption with a known test string to verify it works correctly"""
+        if not self.crypto_key:
+            self.last_error = "Crypto key is not set for testing"
+            return False
+            
+        try:
+            # Test string matching what the client sends in the INFO command
+            test_string = "ТТ=Test"
+            
+            # Try to encrypt and then decrypt the test string
+            encrypted = self.encrypt_data(test_string)
+            if not encrypted:
+                self.last_error = "Failed to encrypt test data"
+                return False
+                
+            decrypted = self.decrypt_data(encrypted)
+            if not decrypted:
+                self.last_error = "Failed to decrypt test data"
+                return False
+                
+            # Check if decryption is correct
+            result = test_string == decrypted
+            if not result:
+                self.last_error = f"Decryption mismatch: expected '{test_string}', got '{decrypted}'"
+                
+            return result
+        except Exception as e:
+            self.last_error = f"Encryption test failed: {str(e)}"
+            return False
 
 class TCPServer:
     def __init__(self, report_server):
@@ -318,11 +350,47 @@ class TCPServer:
                 host_part = conn.client_host[:2] + conn.client_host[-1:]
                 logger.debug(f"Host part from '{conn.client_host}': '{host_part}'")
                 
+                # Standard key construction: server_key + dict_part + host_part
                 conn.crypto_key = server_key + crypto_dict_part + host_part
                 logger.debug(f"Final combined crypto key: '{conn.crypto_key}'")
                 
+                # Log alternative key constructions for debugging
+                alt_key_1 = crypto_dict_part + server_key + host_part
+                logger.debug(f"Alternative key 1 (dict+server+host): '{alt_key_1}'")
+                
+                alt_key_2 = server_key[::-1] + crypto_dict_part + host_part
+                logger.debug(f"Alternative key 2 (reversed server + dict + host): '{alt_key_2}'")
+                
+                alt_key_3 = crypto_dict_part + host_part + server_key
+                logger.debug(f"Alternative key 3 (dict + host + server): '{alt_key_3}'")
+                
+                # Store alternative keys for possible later use
+                conn.alt_crypto_keys = [alt_key_1, alt_key_2, alt_key_3]
+                
                 logger.info(f"Generated crypto key: server_key={server_key}, length={key_len}, full_key={conn.crypto_key}")
                 logger.info(f"Crypto key components: dict_part='{crypto_dict_part}', host_part='{host_part}', key_id={key_id}")
+                
+                # Test the encryption to see if it works correctly
+                if conn.test_encryption():
+                    logger.info("Encryption test passed successfully")
+                else:
+                    logger.warning(f"Encryption test failed: {conn.last_error}")
+                    
+                    # Try alternative keys
+                    for i, alt_key in enumerate(conn.alt_crypto_keys):
+                        logger.info(f"Testing alternative key {i+1}")
+                        # Save original key to restore if needed
+                        original_key = conn.crypto_key
+                        
+                        # Try with alternative key
+                        conn.crypto_key = alt_key
+                        if conn.test_encryption():
+                            logger.info(f"Alternative key {i+1} passed encryption test!")
+                            break
+                        else:
+                            logger.warning(f"Alternative key {i+1} failed: {conn.last_error}")
+                            # Restore original key
+                            conn.crypto_key = original_key
                 
                 # Mark connection as authenticated
                 conn.authenticated = True
@@ -342,7 +410,12 @@ class TCPServer:
                 response = status_line
                 response += b"LEN=" + str(key_len).encode('ascii') + b"\r\n"
                 response += b"KEY=" + server_key.encode('ascii') + b"\r\n"
+                
+                # Try adding an extra newline at the end (Delphi might expect this exact format)
                 response += b"\r\n"  # Blank line at the end
+                
+                # Try logging the raw byte representation of the response for better debugging
+                logger.debug(f"Response raw bytes: {response!r}")
                 
                 # Log the exact byte-level response for debugging
                 logger.info(f"INIT response (exact format): status=200, LEN={key_len}, KEY={server_key}")
@@ -371,11 +444,34 @@ class TCPServer:
                     return b'ERROR Missing DATA parameter'
                 
                 encrypted_data = parts[1][5:]  # Remove DATA= prefix
+                logger.debug(f"Received encrypted data: {encrypted_data}")
                 
-                # Decrypt data
+                # Try to decrypt with primary key first
                 decrypted_data = conn.decrypt_data(encrypted_data)
                 if not decrypted_data:
-                    logger.error(f"Failed to decrypt data: {conn.last_error}")
+                    logger.warning(f"Primary key decryption failed: {conn.last_error}")
+                    
+                    # Try alternative keys if available
+                    if hasattr(conn, 'alt_crypto_keys') and conn.alt_crypto_keys:
+                        for i, alt_key in enumerate(conn.alt_crypto_keys):
+                            logger.debug(f"Trying alternative key {i+1}: {alt_key}")
+                            
+                            # Create a temporary DataCompressor with the alternative key
+                            from .crypto import DataCompressor
+                            temp_compressor = DataCompressor(alt_key)
+                            
+                            try:
+                                alt_decrypted = temp_compressor.decompress_data(encrypted_data)
+                                if alt_decrypted:
+                                    logger.info(f"Alternative key {i+1} worked! Switching to this key.")
+                                    conn.crypto_key = alt_key  # Update the connection's crypto key
+                                    decrypted_data = alt_decrypted
+                                    break
+                            except Exception as e:
+                                logger.debug(f"Alternative key {i+1} failed: {e}")
+                
+                if not decrypted_data:
+                    logger.error(f"Failed to decrypt data with any key: {conn.last_error}")
                     return f'ERROR Failed to decrypt data: {conn.last_error}'.encode('utf-8')
                 
                 # Parse data as key-value pairs
