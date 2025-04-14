@@ -275,22 +275,45 @@ class TCPServer:
                                 # Format based on the server logs error messages
                                 raw_response = f"LEN={conn.key_length}\r\nKEY={conn.server_key}\r\n".encode('ascii')
                                 
-                                # Try a format similar to Windows INI format, which is natively supported by Delphi
-                                # Many Delphi applications use TIniFile rather than TStringList for parsing
-                                ini_format = f"[Crypto]\r\nLEN={conn.key_length}\r\nKEY={conn.server_key}\r\n".encode('ascii')
-                                logger.info(f"!!TESTING WINDOWS INI FORMAT: {repr(ini_format)}!!")
+                                # Try a completely different approach: Delphi TStringList serialization format
+                                # This is how Delphi's SaveToStream/LoadFromStream works with TStringList
+                                # First byte is the count of strings, followed by each string with length prefix
+                                # Since we have exactly 2 strings, we'll use count=2
+                                
+                                # Format each string as length-prefixed
+                                len_str = f"LEN={conn.key_length}"
+                                key_str = f"KEY={conn.server_key}"
+                                
+                                # Construct serialized format bytes manually
+                                # First the count as a single byte (2 strings)
+                                count_byte = bytes([2])
+                                
+                                # Then the first string with length prefix
+                                len_str_bytes = len_str.encode('ascii')
+                                len_str_len = len(len_str_bytes)
+                                len_prefix1 = len_str_len.to_bytes(4, byteorder='little')
+                                
+                                # Then the second string with length prefix
+                                key_str_bytes = key_str.encode('ascii')
+                                key_str_len = len(key_str_bytes)
+                                len_prefix2 = key_str_len.to_bytes(4, byteorder='little')
+                                
+                                # Combine all parts
+                                delphi_format = count_byte + len_prefix1 + len_str_bytes + len_prefix2 + key_str_bytes
+                                
+                                logger.info(f"!!TESTING DELPHI TSTRINGLIST SERIALIZATION FORMAT: {repr(delphi_format)}!!")
                                 
                                 # Detailed binary byte-by-byte logging
                                 byte_details = []
-                                for i, b in enumerate(ini_format):
-                                    if 32 <= b <= 126:
-                                        byte_details.append(f"{i}:{b:02x}({chr(b)})")
-                                    else:
-                                        byte_details.append(f"{i}:{b:02x}(?)")
-                                logger.info(f"Exact bytes: {' '.join(byte_details)}")
+                                for i, b in enumerate(delphi_format):
+                                    byte_details.append(f"{i}:{b:02x}")
+                                logger.info(f"Binary bytes: {' '.join(byte_details)}")
+                                
+                                # Also log a more readable version
+                                logger.info(f"Serialized TStringList: count=2, strings=['{len_str}', '{key_str}']")
                                 
                                 # Don't apply any normalization
-                                response = ini_format
+                                response = delphi_format
                             
                             # Double check the final response
                             logger.info(f"Final normalized response: {repr(response)}")
