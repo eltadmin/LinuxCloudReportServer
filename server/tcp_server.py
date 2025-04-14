@@ -271,6 +271,15 @@ class TCPServer:
                             # For INIT command with debug enabled, double check the original format
                             global USE_FIXED_DEBUG_RESPONSE
                             if USE_FIXED_DEBUG_RESPONSE and command.startswith('INIT'):
+                                # Get the params from the outer scope
+                                # Parse INIT command parameters from command
+                                init_params = {}
+                                parts = command.split(' ')
+                                for param in parts[1:]:
+                                    if '=' in param:
+                                        key, value = param.split('=', 1)
+                                        init_params[key.upper()] = value
+                                
                                 # Force the exact format that would be read properly by Delphi client
                                 # Format based on the server logs error messages
                                 
@@ -295,18 +304,21 @@ class TCPServer:
                                 conn.key_length = debug_key_len
                                 
                                 # Recalculate the crypto key using fixed values
-                                dict_entry = CRYPTO_DICTIONARY[int(params['ID']) - 1]
-                                crypto_dict_part = dict_entry[:debug_key_len]
-                                host_first_chars = conn.client_host[:2]
-                                orig_host_last_char = conn.client_host[-1:]
-                                conn.crypto_key = debug_server_key + crypto_dict_part + host_first_chars + orig_host_last_char
-                                
-                                logger.info(f"DEBUG MODE: Using fixed crypto key: {conn.crypto_key}")
-                                
-                                # Test that encryption works with this key
-                                logger.info("DEBUG MODE: Testing encryption with fixed key...")
-                                test_result = conn.test_encryption()
-                                logger.info(f"DEBUG MODE: Encryption test result: {test_result}")
+                                if 'ID' in init_params:
+                                    dict_entry = CRYPTO_DICTIONARY[int(init_params['ID']) - 1]
+                                    crypto_dict_part = dict_entry[:debug_key_len]
+                                    host_first_chars = conn.client_host[:2]
+                                    orig_host_last_char = conn.client_host[-1:]
+                                    conn.crypto_key = debug_server_key + crypto_dict_part + host_first_chars + orig_host_last_char
+                                    
+                                    logger.info(f"DEBUG MODE: Using fixed crypto key: {conn.crypto_key}")
+                                    
+                                    # Test that encryption works with this key
+                                    logger.info("DEBUG MODE: Testing encryption with fixed key...")
+                                    test_result = conn.test_encryption()
+                                    logger.info(f"DEBUG MODE: Encryption test result: {test_result}")
+                                else:
+                                    logger.error("ID parameter not found in INIT command, cannot recalculate crypto key")
                             
                             # Double check the final response
                             logger.info(f"Final normalized response: {repr(response)}")
