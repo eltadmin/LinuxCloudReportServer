@@ -493,6 +493,43 @@ class TCPServer:
                 logger.info(f"INIT response hex: {response.hex()}")
                 logger.info(f"INIT response repr: {repr(response)}")
                 
+                # Log final response right before sending
+                logger.info(f"INIT RESPONSE Detailed bytes: {' '.join([f"{i}:{chr(b) if 32 <= b <= 126 else '\\x' + f'{b:02x}'}" for i, b in enumerate(response)])}")
+                logger.info(f"INIT RESPONSE Hex dump:\n" + '\n'.join([f"{i:04x}: {response[i:i+16].hex(' '):<48} | {''.join(chr(b) if 32 <= b <= 126 else '.' for b in response[i:i+16])}" for i in range(0, len(response), 16)]))
+                
+                # Add Delphi parsing help
+                logger.info("DELPHI PARSING INFO: This is how the response would be handled in Delphi:")
+                
+                # Recreate the response as if processed by Delphi StringList.Text
+                sample_delphi_stringlist = []
+                for line in response.decode('ascii', errors='replace').split('\r\n'):
+                    if line.strip():  # Skip empty lines
+                        sample_delphi_stringlist.append(line)
+                logger.info(f"TStringList.Count would be: {len(sample_delphi_stringlist)}")
+                logger.info(f"TStringList items would be: {sample_delphi_stringlist}")
+                
+                # Recreate how Delphi would parse key=value pairs
+                sample_delphi_values = {}
+                for line in sample_delphi_stringlist:
+                    if '=' in line:
+                        key, value = line.split('=', 1)
+                        # Strip quotes if present
+                        if value.startswith('"') and value.endswith('"'):
+                            value = value[1:-1]
+                        sample_delphi_values[key] = value
+                logger.info(f"Parsed values in Delphi would be: {sample_delphi_values}")
+                
+                # Check for KEY and LEN specifically
+                if 'KEY' in sample_delphi_values:
+                    logger.info(f"Delphi would find KEY={sample_delphi_values['KEY']}")
+                else:
+                    logger.warning("Delphi would NOT find a KEY value!")
+                
+                if 'LEN' in sample_delphi_values:
+                    logger.info(f"Delphi would find LEN={sample_delphi_values['LEN']}")
+                else:
+                    logger.warning("Delphi would NOT find a LEN value!")
+                
                 # Try with a fixed string format that matches Delphi's TStringList output for testing
                 if True:  # TEMP FIX: Enable during testing
                     # Try with various format variations based on Delphi TStringList
@@ -506,7 +543,7 @@ class TCPServer:
                     logger.info(f"Format B - KEY first with LF: {repr(lf_key_first)}")
                     
                     # 3. Classic Windows-style format with quotes
-                    classic_format = f"KEY=\"{server_key}\"\r\nLEN={key_len}\r\n".encode('ascii')
+                    classic_format = f"KEY=\"{server_key}\"\r\nLEN={key_len}\r\n\r\n".encode('ascii')
                     logger.info(f"Format C - Classic Windows with quotes: {repr(classic_format)}")
                     
                     # 4. Minimal format
@@ -521,8 +558,16 @@ class TCPServer:
                     numeric_len = f"KEY={server_key}\r\n{key_len}\r\n".encode('ascii')
                     logger.info(f"Format F - KEY with numeric LEN: {repr(numeric_len)}")
                     
-                    # Select which format to try - CHANGE THIS TO LETTER A-F TO TRY DIFFERENT FORMATS
-                    format_to_use = 'B'
+                    # 7. Delphi StringList.Text CRLF endings with equal signs escaped
+                    escaped_format = f"KEY={server_key}\r\nLEN\\={key_len}\r\n\r\n".encode('ascii')
+                    logger.info(f"Format G - Escaped equal signs: {repr(escaped_format)}")
+                    
+                    # 8. Windows INI-file style format
+                    ini_format = f"[Init]\r\nKEY={server_key}\r\nLEN={key_len}\r\n\r\n".encode('ascii')
+                    logger.info(f"Format H - INI file style: {repr(ini_format)}")
+                    
+                    # Select which format to try - CHANGE THIS TO LETTER A-H TO TRY DIFFERENT FORMATS
+                    format_to_use = 'C'
                     
                     # Map of formats
                     formats = {
@@ -531,7 +576,9 @@ class TCPServer:
                         'C': classic_format,
                         'D': minimal_format,
                         'E': legacy_format,
-                        'F': numeric_len
+                        'F': numeric_len,
+                        'G': escaped_format,
+                        'H': ini_format
                     }
                     
                     response = formats[format_to_use]
