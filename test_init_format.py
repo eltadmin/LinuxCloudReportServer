@@ -10,6 +10,7 @@ import time
 import sys
 import random
 import string
+import struct
 
 # Server details (adjust as needed)
 HOST = '10.150.40.8'  # localhost
@@ -43,66 +44,150 @@ def main():
                 break
             response += data
             # If we have a complete response, break
-            if b'\n' in response or b'\r\n' in response:
-                break
+            if b'\n' in response or b'\r\n' in response or len(response) > 4:
+                # For binary formats, we need to check if we have received all data
+                if len(response) >= 1 and response[0] <= 3:  # Format 7
+                    # For format 7, first byte is count, check if we have expected content
+                    num_lines = response[0]
+                    # Check if we have enough CRLF sequences
+                    crlf_count = response.count(b'\r\n')
+                    if crlf_count >= num_lines:
+                        break
+                elif len(response) >= 4:  # Format 8 possibly
+                    try:
+                        count = struct.unpack('<I', response[:4])[0]
+                        if count <= 10:  # Sanity check - shouldn't have too many strings
+                            # For format 8, check if we've received all the strings
+                            offset = 4
+                            complete = True
+                            for _ in range(count):
+                                if offset + 4 > len(response):
+                                    complete = False
+                                    break
+                                str_len = struct.unpack('<I', response[offset:offset+4])[0]
+                                offset += 4
+                                if offset + str_len > len(response):
+                                    complete = False
+                                    break
+                                offset += str_len
+                            if complete:
+                                break
+                    except struct.error:
+                        # Not format 8 or malformed, continue with normal checks
+                        pass
+                else:
+                    break
         
         print("\n=== Raw Response ===")
         print(f"Bytes: {response}")
         print(f"Hex: {response.hex(' ')}")
-        
-        # Try to decode as ASCII
+
+        # Try to parse as text first
         try:
-            ascii_response = response.decode('ascii')
-            print(f"ASCII: '{ascii_response}'")
+            text_response = response.decode('ascii', errors='replace')
+            print(f"\n=== Text Response ===")
+            print(text_response)
             
-            # Check if the response contains LEN and KEY
-            if 'LEN=' in ascii_response and 'KEY=' in ascii_response:
-                print("\n✅ Response contains LEN and KEY parameters")
-                
-                # Parse the response to extract values
-                response_lines = ascii_response.replace('\r\n', '\n').split('\n')
-                for line in response_lines:
-                    if line.strip():
-                        print(f"Line: '{line}'")
-                        if '=' in line:
-                            key, value = line.split('=', 1)
-                            print(f"  Parameter: {key} = {value}")
-                
-                # Simulate how a Delphi client would parse this
-                print("\n=== Delphi Parsing Simulation ===")
-                
-                # In Delphi, TIdReply.Text would contain the response lines
-                # And TIdReply.Text.Values['KEY'] would access the key value
-                values = {}
-                for line in response_lines:
+            # Try to parse key-value pairs
+            if 'KEY=' in text_response:
+                print("\n=== Parsed Values ===")
+                for line in text_response.split('\r\n'):
+                    if not line.strip():
+                        continue
+                    
                     if '=' in line:
                         key, value = line.split('=', 1)
-                        values[key] = value
-                
-                len_value = values.get('LEN', 'NOT FOUND')
-                key_value = values.get('KEY', 'NOT FOUND')
-                
-                print(f"LEN value: {len_value}")
-                print(f"KEY value: {key_value}")
-                
-                if len_value != 'NOT FOUND' and key_value != 'NOT FOUND':
-                    print("\n✅ Delphi client should be able to parse this response correctly")
-                else:
-                    print("\n❌ Delphi client might have trouble parsing this response")
-            else:
-                print("\n❌ Response does not contain LEN and KEY parameters")
+                        print(f"{key}: {value}")
+                    else:
+                        print(f"Line: {line}")
             
-        except UnicodeDecodeError:
-            print("Response contains non-ASCII characters")
+        except Exception as e:
+            print(f"Error parsing as text: {e}")
         
-    except socket.error as e:
-        print(f"Socket error: {e}")
-    except Exception as e:
-        print(f"Error: {e}")
-    finally:
+        # Try to parse as binary formats
+        try:
+            # Format 7: Delphi TStringList.SaveToStream format
+            # First byte is the number of lines
+            if len(response) > 1 and response[0] in range(1, 10):  # Reasonable range for number of lines
+                print("\n=== Binary Format 7 (TStringList) Parse Attempt ===")
+                num_lines = response[0]
+                print(f"Number of lines: {num_lines}")
+                
+                # Split rest of data by CRLF
+                rest_data = response[1:]
+                lines = rest_data.split(b'\r\n')
+                
+                print(f"Found {len(lines)} lines in data")
+                for i, line in enumerate(lines):
+                    if i >= num_lines:
+                        break
+                    if line:  # Skip empty lines
+                        print(f"Line {i+1}: {line.decode('ascii', errors='replace')}")
+                
+                # Check for key-value pairs
+                print("\n=== Format 7 Parsed Values ===")
+                for i, line in enumerate(lines):
+                    if i >= num_lines or not line:
+                        continue
+                    
+                    line_text = line.decode('ascii', errors='replace')
+                    if '=' in line_text:
+                        key, value = line_text.split('=', 1)
+                        print(f"{key}: {value}")
+            
+            # Format 8: Binary format with length-prefixed strings
+            # First 4 bytes: number of strings
+            # Then each string: 4 bytes length + string data
+            elif len(response) > 8:  # At least 4 bytes for count + 4 bytes for first string length
+                print("\n=== Binary Format 8 (Length-prefixed) Parse Attempt ===")
+                try:
+                    count = struct.unpack('<I', response[:4])[0]
+                    if count > 20:  # Sanity check - shouldn't have too many strings
+                        print(f"Count seems too large ({count}), probably not format 8")
+                    else:
+                        print(f"Number of strings: {count}")
+                        
+                        # Parse each string
+                        offset = 4  # Start after the count
+                        extracted_lines = []
+                        
+                        for i in range(count):
+                            if offset + 4 <= len(response):
+                                str_len = struct.unpack('<I', response[offset:offset+4])[0]
+                                offset += 4
+                                
+                                if offset + str_len <= len(response):
+                                    str_data = response[offset:offset+str_len]
+                                    str_text = str_data.decode('ascii', errors='replace')
+                                    print(f"String {i+1}: {str_text}")
+                                    extracted_lines.append(str_text)
+                                    offset += str_len
+                                else:
+                                    print(f"String {i+1}: Data too short for length {str_len}")
+                                    break
+                            else:
+                                print(f"String {i+1}: Not enough data to read length")
+                                break
+                        
+                        # Check for key-value pairs
+                        print("\n=== Format 8 Parsed Values ===")
+                        for line in extracted_lines:
+                            if '=' in line:
+                                key, value = line.split('=', 1)
+                                print(f"{key}: {value}")
+                except struct.error as e:
+                    print(f"Error unpacking binary data: {e}")
+        
+        except Exception as e:
+            print(f"Error parsing binary formats: {e}")
+        
+        # Close the connection
         sock.close()
         print("\nConnection closed")
-
+        
+    except Exception as e:
+        print(f"Error: {e}")
+        
 if __name__ == "__main__":
     # Allow overriding host and port from command line
     if len(sys.argv) > 1:

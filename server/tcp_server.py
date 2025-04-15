@@ -20,6 +20,7 @@ from .crypto import DataCompressor
 import base64
 import re
 import socket
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -787,11 +788,94 @@ class TCPServer:
         Returns:
             The formatted response bytes
         """
-        # Use the standard Delphi format with CRLF line endings
-        # Format 1 is the standard Delphi format that the client expects
-        response_format = RESPONSE_FORMATS['format1'].format(key_len, server_key)
-        response_bytes = response_format.encode('ascii')
+        # Instead of using predefined formats, let's try a variety of formats
+        # to find what the Delphi client expects
         
+        # Use the environment variable to select the format or default to format 1
+        format_type = os.environ.get('INIT_RESPONSE_FORMAT', '1')
+        
+        if format_type == '1':
+            # Standard Delphi format with CRLF - LEN=8\r\nKEY=ABCDEFGH
+            response_format = f"LEN={key_len}\r\nKEY={server_key}"
+        elif format_type == '2':
+            # TIdReply direct format - 200 LEN=8 KEY=ABCDEFGH\r\n
+            response_format = f"200 LEN={key_len} KEY={server_key}\r\n"
+        elif format_type == '3':
+            # With numeric code and text - 200 OK\r\nLEN={key_len}\r\nKEY={server_key}\r\n
+            response_format = f"200 OK\r\nLEN={key_len}\r\nKEY={server_key}\r\n"
+        elif format_type == '4':
+            # Just key-value pairs with CRLF ending - LEN={key_len}\r\nKEY={server_key}\r\n
+            response_format = f"LEN={key_len}\r\nKEY={server_key}\r\n"
+        elif format_type == '5':
+            # Just key-value pairs with single LF - LEN={key_len}\nKEY={server_key}\n
+            response_format = f"LEN={key_len}\nKEY={server_key}\n"
+        elif format_type == '6':
+            # Just the key - ABCDEFGH
+            response_format = f"{server_key}"
+        elif format_type == '7':
+            # Delphi TStringList.SaveToStream format (count + strings)
+            # First byte is the number of lines (2), then each line with CR/LF
+            response_bytes = bytearray([2])  # Number of lines
+            response_bytes.extend(f"LEN={key_len}\r\n".encode('ascii'))
+            response_bytes.extend(f"KEY={server_key}\r\n".encode('ascii'))
+            return response_bytes
+        elif format_type == '8':
+            # Binary format (length prefixed strings)
+            # First 4 bytes: number of strings (2)
+            # Then each string: 4 bytes length + string data
+            count = 2
+            line1 = f"LEN={key_len}".encode('ascii')
+            line2 = f"KEY={server_key}".encode('ascii')
+            
+            # Build response
+            response_bytes = bytearray()
+            response_bytes.extend(count.to_bytes(4, byteorder='little'))
+            
+            # Add first line
+            line1_len = len(line1)
+            response_bytes.extend(line1_len.to_bytes(4, byteorder='little'))
+            response_bytes.extend(line1)
+            
+            # Add second line
+            line2_len = len(line2)
+            response_bytes.extend(line2_len.to_bytes(4, byteorder='little'))
+            response_bytes.extend(line2)
+            
+            return response_bytes
+        elif format_type == '9':
+            # Synchronous Delphi response format for direct connection
+            # This format is optimized for Delphi clients that expect a synchronous response
+            # It uses a specific binary format expected by Delphi's TIdTCPClient
+            
+            # First create a TStringList equivalent with key-value pairs
+            str_list = [f"LEN={key_len}", f"KEY={server_key}"]
+            
+            # Encode in the format expected by Delphi's synchronous client
+            # Format: <1-byte count><4-byte length><data><4-byte length><data>...
+            response_bytes = bytearray([len(str_list)])  # Number of strings as 1 byte
+            
+            for item in str_list:
+                data = item.encode('ascii')
+                length = len(data)
+                # Add 4-byte length (little endian) followed by data
+                response_bytes.extend(length.to_bytes(4, byteorder='little'))
+                response_bytes.extend(data)
+            
+            logger.info(f"Using synchronous Delphi response format with {len(str_list)} items")
+            logger.info(f"First few bytes: {' '.join([f'{b:02x}' for b in response_bytes[:20]])}")
+            
+            return response_bytes
+        else:
+            # Default to format 1
+            response_format = f"LEN={key_len}\r\nKEY={server_key}"
+        
+        # Convert to bytes if not already done
+        if isinstance(response_format, str):
+            response_bytes = response_format.encode('ascii')
+        else:
+            response_bytes = response_format
+        
+        logger.info(f"Using INIT response format: {format_type}")
         logger.info(f"INIT response: {response_bytes}")
         logger.info(f"INIT response hex: {' '.join([f'{b:02x}' for b in response_bytes])}")
         
