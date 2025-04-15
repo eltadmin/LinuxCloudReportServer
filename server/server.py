@@ -35,6 +35,7 @@ class ReportServer:
             # TCP settings
             self.tcp_interface = config.get(f'{self.section}TCP', 'TCP_IPInterface', fallback='0.0.0.0')
             self.tcp_port = config.getint(f'{self.section}TCP', 'TCP_Port', fallback=8016)
+            self.disable_tcp_server = os.getenv('DISABLE_TCP_SERVER', '').lower() in ('true', '1', 'yes')
             
             # Auth settings - prioritize environment variable over INI file
             self.auth_server_url = os.getenv('AUTH_SERVER_URL') or config.get(f'{self.section}AUTHSERVER', 'REST_URL')
@@ -42,14 +43,17 @@ class ReportServer:
             # HTTP logins
             self.http_logins = dict(config.items(f'{self.section}HTTPLOGINS'))
             
-            logger.info(f"Configuration loaded successfully: HTTP on {self.http_interface}:{self.http_port}, TCP on {self.tcp_interface}:{self.tcp_port}")
+            if self.disable_tcp_server:
+                logger.info(f"TCP server is disabled. Only HTTP on {self.http_interface}:{self.http_port} will be started.")
+            else:
+                logger.info(f"Configuration loaded successfully: HTTP on {self.http_interface}:{self.http_port}, TCP on {self.tcp_interface}:{self.tcp_port}")
         except Exception as e:
             logger.error(f"Error loading configuration: {e}", exc_info=True)
             raise ValueError(f"Configuration error: {e}")
         
         # Initialize components
         self.db = Database()
-        self.tcp_server = TCPServer(self)
+        self.tcp_server = TCPServer(self) if not self.disable_tcp_server else None
         self.http_server = HTTPServer(self)
         
         # Create required directories
@@ -92,14 +96,17 @@ class ReportServer:
                     logger.critical("Maximum database connection retries reached")
                     raise
         
-        try:
-            # Start TCP server
-            await self.tcp_server.start(self.tcp_interface, self.tcp_port)
-            logger.info(f"TCP server listening on {self.tcp_interface}:{self.tcp_port}")
-        except Exception as e:
-            logger.critical(f"Failed to start TCP server: {e}", exc_info=True)
-            await self.db.disconnect()
-            raise RuntimeError(f"TCP server start failed: {e}")
+        # Start TCP server if not disabled
+        if not self.disable_tcp_server:
+            try:
+                await self.tcp_server.start(self.tcp_interface, self.tcp_port)
+                logger.info(f"TCP server listening on {self.tcp_interface}:{self.tcp_port}")
+            except Exception as e:
+                logger.critical(f"Failed to start TCP server: {e}", exc_info=True)
+                await self.db.disconnect()
+                raise RuntimeError(f"TCP server start failed: {e}")
+        else:
+            logger.info("TCP server is disabled, skipping TCP server startup")
         
         try:
             # Start HTTP server
@@ -107,8 +114,9 @@ class ReportServer:
             logger.info(f"HTTP server listening on {self.http_interface}:{self.http_port}")
         except Exception as e:
             logger.critical(f"Failed to start HTTP server: {e}", exc_info=True)
-            # Clean up TCP server if HTTP server fails
-            await self.tcp_server.stop()
+            # Clean up TCP server if HTTP server fails and TCP server is running
+            if not self.disable_tcp_server:
+                await self.tcp_server.stop()
             await self.db.disconnect()
             raise RuntimeError(f"HTTP server start failed: {e}")
         
@@ -126,14 +134,15 @@ class ReportServer:
         
         stop_errors = []
         
-        # Stop components with error handling
-        try:
-            await self.tcp_server.stop()
-            logger.info("TCP server stopped")
-        except Exception as e:
-            error_msg = f"Error stopping TCP server: {e}"
-            logger.error(error_msg, exc_info=True)
-            stop_errors.append(error_msg)
+        # Stop TCP server if not disabled
+        if not self.disable_tcp_server:
+            try:
+                await self.tcp_server.stop()
+                logger.info("TCP server stopped")
+            except Exception as e:
+                error_msg = f"Error stopping TCP server: {e}"
+                logger.error(error_msg, exc_info=True)
+                stop_errors.append(error_msg)
         
         try:
             await self.http_server.stop()
@@ -181,7 +190,10 @@ class ReportServer:
                         logger.error(f"Database reconnection failed: {e}")
                 
                 # Health check logging
-                active_tcp_clients = len(self.tcp_server.connections)
+                if not self.disable_tcp_server:
+                    active_tcp_clients = len(self.tcp_server.connections)
+                else:
+                    active_tcp_clients = "N/A (TCP server disabled)"
                 logger.info(f"Health check: {active_tcp_clients} active TCP clients, DB connected: {self.db_connected}")
                 
                 await asyncio.sleep(3600)  # Check every hour
@@ -286,12 +298,20 @@ class ReportServer:
         if self.startup_time:
             uptime = time.time() - self.startup_time
             
-        return {
+        status_info = {
             "status": "running" if self.running else "stopped",
             "uptime_seconds": uptime,
             "db_connected": self.db_connected,
-            "tcp_clients": len(self.tcp_server.connections),
-            "pending_connections": len(self.tcp_server.pending_connections),
+            "tcp_server_enabled": not self.disable_tcp_server,
             "last_cleanup": self.last_cleanup.isoformat() if self.last_cleanup else None,
             "trace_log_enabled": self.trace_log_enabled
-        } 
+        }
+        
+        # Add TCP client info if TCP server is enabled
+        if not self.disable_tcp_server:
+            status_info.update({
+                "tcp_clients": len(self.tcp_server.connections),
+                "pending_connections": len(self.tcp_server.pending_connections)
+            })
+            
+        return status_info 

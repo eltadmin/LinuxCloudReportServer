@@ -181,4 +181,67 @@ Regular maintenance tasks:
 - Back up the database regularly
 - Update security certificates if used
 
-For detailed implementation information, refer to the code comments in each component file. 
+For detailed implementation information, refer to the code comments in each component file.
+
+## Using the Go TCP Server
+
+The project now includes a Go-based TCP server implementation that exactly matches the Windows server's TCP protocol format. This is especially important for the INIT command response format, which needs to be compatible with the Delphi client.
+
+### Why Use the Go TCP Server?
+
+The Go TCP server implementation provides:
+
+1. Better format compatibility with the Windows server
+2. Improved performance and memory efficiency
+3. Lower latency for client connections
+4. Native handling of TCP connections without Python's overhead
+
+### How to Use the Go TCP Server
+
+#### With Docker Compose:
+
+The `docker-compose.yml` file has been updated to include the Go TCP server. To use it:
+
+```bash
+# Start all services with the Go TCP server
+docker-compose up -d
+```
+
+#### Standalone Usage:
+
+You can also build and run the Go TCP server directly:
+
+```bash
+# On Linux
+chmod +x start_go_server.sh
+./start_go_server.sh
+
+# On Windows
+start_go_server.bat
+```
+
+#### Building Manually:
+
+```bash
+# Build the Go server
+go build -o tcp_server go_tcp_server.go
+
+# Run the server
+./tcp_server
+```
+
+### Configuration
+
+The Go TCP server reads the following environment variables:
+
+- `TCP_HOST`: TCP interface to listen on (default: 0.0.0.0)
+- `TCP_PORT`: TCP port to listen on (default: 8016)
+
+### Disabling the Python TCP Server
+
+When using the Go TCP server, you should disable the Python TCP server to avoid port conflicts. This is automatically handled in the Docker Compose setup, but if you're running the Python server manually, set the `DISABLE_TCP_SERVER` environment variable:
+
+```bash
+export DISABLE_TCP_SERVER=true
+python -m main
+``` 
