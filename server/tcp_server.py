@@ -438,12 +438,12 @@ class TCPServer:
         try:
             # Convert string to bytes if necessary
             if isinstance(response, str):
-                # Ensure we have proper line endings for string responses
+                # Only add CRLF if not already present
                 if not response.endswith("\r\n"):
                     response += "\r\n"
                 response_bytes = response.encode('latin1')
             else:
-                # For bytes, add CRLF if needed
+                # For bytes responses, only add CRLF if not already present
                 response_bytes = response
                 if not response_bytes.endswith(b'\r\n'):
                     response_bytes += b'\r\n'
@@ -751,17 +751,11 @@ class TCPServer:
         Returns:
             Formatted response string
         """
-        # Windows server sends an empty line at the beginning, followed by LEN and KEY
-        # The Delphi client parses with:
-        # FTCPClient.LastCmdResult.Text.Values['LEN'] and FTCPClient.LastCmdResult.Text.Values['KEY']
-        response_parts = [
-            "",  # Empty line first
-            f"LEN={key_length}",
-            f"KEY={server_key}"
-        ]
-        
-        # Join with Windows-style CRLF line endings
-        return "\r\n".join(response_parts)
+        # Create a response matching TIdReply format in Delphi
+        # Based on the client code, FTCPClient.LastCmdResult.Text.Values['LEN'] and ['KEY'] will parse this
+        # The 200 code at the beginning is essential for TIdReply 
+        response = f"200\r\nLEN={key_length}\r\nKEY={server_key}\r\n"
+        return response
         
     async def _handle_error(self, conn: TCPConnection, parts: List[str]) -> bytes:
         """
