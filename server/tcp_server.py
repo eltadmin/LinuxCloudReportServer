@@ -774,7 +774,9 @@ class TCPServer:
             # Original Windows server format - KEY=value,LEN=value
             response = f"KEY={server_key},LEN={key_len}"
         elif format_type == 1:
-            # Format with name-value pairs with CR+LF and no separating commas
+            # Format with name-value pairs with CR+LF (KEY first)
+            # Make sure to end with CRLF for Delphi compatibility
+            # This is what Text.Values['KEY'] expects in Delphi
             response = f"KEY={server_key}\r\nLEN={key_len}"
         elif format_type == 2:
             # Format with key-values in specific order (LEN first)
@@ -818,6 +820,10 @@ class TCPServer:
                 line_bytes = line.encode('ascii')
                 response_bytes += struct.pack('<I', len(line_bytes)) + line_bytes
             return response_bytes
+        elif format_type == 9:
+            # Special format that mimics the exact Windows server behavior from logs
+            # Format with a trailing CR+LF for exact Delphi compatibility
+            response = f"KEY={server_key},LEN={key_len}\r\n"
         else:
             # Default to original format
             response = f"KEY={server_key},LEN={key_len}"

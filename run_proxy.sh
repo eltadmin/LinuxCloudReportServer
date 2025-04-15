@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # Default values
-TARGET_HOST=${1:-"127.0.0.1"}
+TARGET_HOST=${1:-"10.150.40.8"}
 TARGET_PORT=${2:-"8016"}
 LISTEN_PORT=8017
 
