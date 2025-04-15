@@ -438,8 +438,11 @@ class TCPServer:
         try:
             # Convert string to bytes if necessary
             if isinstance(response, str):
-                # Only add CRLF if not already present
-                if not response.endswith("\r\n"):
+                # Check if this is an INIT response (has LEN and KEY)
+                is_init_response = "LEN=" in response and "KEY=" in response
+                
+                # Only add CRLF if not already present and it's not an INIT response
+                if not response.endswith("\r\n") and not is_init_response:
                     response += "\r\n"
                 response_bytes = response.encode('latin1')
             else:
@@ -751,11 +754,9 @@ class TCPServer:
         Returns:
             Formatted response string
         """
-        # Using a simple format that should be compatible with Delphi TIdCmdTCPClient
-        # No blank line after the status code, just status code followed by values
-        response = "200\r\n"  # Status code line
-        response += f"LEN={key_length}\r\n"  # First parameter
-        response += f"KEY={server_key}\r\n"  # Second parameter
+        # Using format directly matching Delphi's TIdCmdTCPClient expectations
+        # The client expects LEN and KEY parameters on separate lines without a status code
+        response = f"LEN={key_length}\r\nKEY={server_key}"
         
         return response
         
