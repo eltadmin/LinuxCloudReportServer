@@ -444,9 +444,8 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	cryptoKey := serverKey + cryptoDictPart + hostFirstChars + hostLastChar
 	conn.cryptoKey = cryptoKey
 	
-	// EXACT RESPONSE FORMAT - разменяме реда на LEN и KEY + добавяме завършващ CRLF
-	// След проверка в Delphi Reply.Text.Text, се форматира като TStringList със завършващ CRLF
-	response := fmt.Sprintf("LEN=%d\r\nKEY=%s\r\n", lenValue, serverKey)
+	// НОВИЯТ ФОРМАТ: само един CRLF, без CRLF в края
+	response := fmt.Sprintf("KEY=%s\r\nLEN=%d", serverKey, lenValue)
 	
 	// DEBUG PRINT DETAILED INFORMATION
 	log.Printf("=========== INIT RESPONSE DETAILS ===========")
