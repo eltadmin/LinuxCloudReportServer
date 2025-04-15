@@ -824,6 +824,12 @@ class TCPServer:
             # Special format that mimics the exact Windows server behavior from logs
             # Format with a trailing CR+LF for exact Delphi compatibility
             response = f"KEY={server_key},LEN={key_len}\r\n"
+        elif format_type == 11:
+            # Exact format from original Windows server logs
+            # Notice the space after KEY= and LEN= is not present
+            response = f"KEY={server_key},LEN={key_len}"
+            # The response does not include \r\n at the end
+            # The Windows server is returning exactly this format
         else:
             # Default to original format
             response = f"KEY={server_key},LEN={key_len}"
