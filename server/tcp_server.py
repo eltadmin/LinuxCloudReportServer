@@ -765,33 +765,9 @@ class TCPServer:
         Returns:
             The formatted response bytes
         """
-        # Get format type from environment variable with fallback to default
-        format_type = int(os.environ.get('INIT_RESPONSE_FORMAT', '14'))
-        logger.info(f"Using INIT response format type: {format_type}")
-        
-        # Format the response according to the specified format
-        if format_type == 0:
-            # Original Windows server format - KEY=value,LEN=value
-            response = f"KEY={server_key},LEN={key_len}"
-        elif format_type == 1:
-            # Format with name-value pairs with CR+LF (KEY first)
-            # Make sure to end with CRLF for Delphi compatibility
-            # This is what Text.Values['KEY'] expects in Delphi
-            response = f"KEY={server_key}\r\nLEN={key_len}"
-        elif format_type == 2:
-            # Format with key-values in specific order (LEN first)
-            response = f"LEN={key_len}\r\nKEY={server_key}"
-        elif format_type == 3:
-            # Format with just the values, no keys
-            response = f"{server_key}\r\n{key_len}"
-        elif format_type == 14:
-            # IMPORTANT: This is the format that the Delphi TStringList.Values[] expects
-            # LEN first, followed by KEY, each on a separate line with CRLF line endings
-            # The trailing CRLF is critical for Delphi to parse correctly
-            response = f"LEN={key_len}\r\nKEY={server_key}\r\n"
-        else:
-            # Default format matching the original Windows server
-            response = f"LEN={key_len}\r\nKEY={server_key}\r\n"
+        # Based on the README, the format should be LEN first, then KEY, with proper CRLF line endings
+        # This is critical for Delphi's TStringList.Values[] to parse correctly
+        response = f"LEN={key_len}\r\nKEY={server_key}\r\n"
         
         # Log the complete response as it would be displayed/processed
         logger.info(f"INIT response formatted string: {repr(response)}")
