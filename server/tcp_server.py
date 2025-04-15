@@ -793,10 +793,16 @@ class TCPServer:
             # Default format matching the original Windows server
             response = f"LEN={key_len}\r\nKEY={server_key}\r\n"
         
-        logger.info(f"INIT response: {response}")
+        # Log the complete response as it would be displayed/processed
+        logger.info(f"INIT response formatted string: {repr(response)}")
         
         # Convert the response to bytes for sending
-        return response.encode('ascii')
+        response_bytes = response.encode('ascii')
+        
+        # Log the actual bytes being sent for debugging
+        logger.info(f"INIT response bytes (hex): {response_bytes.hex()}")
+        
+        return response_bytes
 
     async def _handle_error(self, conn: TCPConnection, parts: List[str]) -> bytes:
         """

@@ -107,7 +107,7 @@ class DataCompressor:
             return ""
 
 
-def validate_init_response(host='127.0.0.1', port=8016):
+def validate_init_response(host='10.150.40.8', port=8016):
     """Connect to the server, send INIT command, and validate the response format."""
     
     # Generate a hostname similar to what the Delphi client would use
@@ -193,7 +193,7 @@ def validate_init_response(host='127.0.0.1', port=8016):
 
 if __name__ == "__main__":
     # Get host and port from command line args or use defaults
-    host = sys.argv[1] if len(sys.argv) > 1 else '127.0.0.1'
+    host = sys.argv[1] if len(sys.argv) > 1 else '10.150.40.8'
     port = int(sys.argv[2]) if len(sys.argv) > 2 else 8016
     
     if validate_init_response(host, port):
