@@ -246,7 +246,7 @@ func (s *TCPServer) handleConnection(conn *TCPConnection) {
 			if cmd == CMD_INIT {
 				log.Printf("====== SENDING INIT RESPONSE ======")
 				
-				// Delphi не добавя NULL байт - просто използва TIdReply.Text.Values
+				// Важно е да не добавяме null байт, а да изпратим точно както е
 				responseBytes := []byte(response)
 				
 				log.Printf("Raw response: '%s'", response)
@@ -426,8 +426,8 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	
 	// Вземи само първите N символа, където N е дължината на ключа
 	cryptoDictPart := dictEntry
-	if len(dictEntry) > len(serverKey) {
-		cryptoDictPart = dictEntry[:len(serverKey)]
+	if len(dictEntry) > lenValue {
+		cryptoDictPart = dictEntry[:lenValue]
 	}
 	
 	// Extract host parts for key generation
@@ -444,9 +444,9 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	cryptoKey := serverKey + cryptoDictPart + hostFirstChars + hostLastChar
 	conn.cryptoKey = cryptoKey
 	
-	// EXACT RESPONSE FORMAT - точно като в оригиналния Delphi код
-	// В Delphi използва ASender.Reply.Text.Values, което създава редове с формат KEY=value
-	response := fmt.Sprintf("KEY=%s\r\nLEN=%d", serverKey, lenValue)
+	// EXACT RESPONSE FORMAT - разменяме реда на LEN и KEY + добавяме завършващ CRLF
+	// След проверка в Delphi Reply.Text.Text, се форматира като TStringList със завършващ CRLF
+	response := fmt.Sprintf("LEN=%d\r\nKEY=%s\r\n", lenValue, serverKey)
 	
 	// DEBUG PRINT DETAILED INFORMATION
 	log.Printf("=========== INIT RESPONSE DETAILS ===========")
