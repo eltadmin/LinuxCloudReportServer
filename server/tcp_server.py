@@ -751,10 +751,11 @@ class TCPServer:
         Returns:
             Formatted response string
         """
-        # Windows client expects LEN followed by KEY with CRLF line endings
-        # This matches the format that the Delphi client parses with:
+        # Windows server sends an empty line at the beginning, followed by LEN and KEY
+        # The Delphi client parses with:
         # FTCPClient.LastCmdResult.Text.Values['LEN'] and FTCPClient.LastCmdResult.Text.Values['KEY']
         response_parts = [
+            "",  # Empty line first
             f"LEN={key_length}",
             f"KEY={server_key}"
         ]
