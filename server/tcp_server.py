@@ -865,6 +865,11 @@ class TCPServer:
             logger.info(f"First few bytes: {' '.join([f'{b:02x}' for b in response_bytes[:20]])}")
             
             return response_bytes
+        elif format_type == '10':
+            # Original Windows server format - KEY=value,LEN=value
+            # This is the exact format seen in the Windows server logs
+            response_format = f"KEY={server_key},LEN={key_len}"
+            logger.info(f"Using original Windows server format: {response_format}")
         else:
             # Default to format 1
             response_format = f"LEN={key_len}\r\nKEY={server_key}"

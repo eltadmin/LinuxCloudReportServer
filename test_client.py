@@ -7,7 +7,7 @@ import sys
 
 def main():
     """Connect to the server and send an INIT command, then print the raw response"""
-    host = '127.0.0.1'  # Or the server's IP address
+    host = '10.150.40.8'  # Or the server's IP address
     port = 8016  # The port used by the server
     
     try:
