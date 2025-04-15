@@ -1,3 +1,10 @@
+"""
+TCP Server Module for the Linux Cloud Report Server.
+
+This module provides the TCP server implementation that handles client connections
+and commands with encryption.
+"""
+
 import asyncio
 import logging
 from typing import Dict, Optional, List, Tuple
@@ -16,14 +23,39 @@ import socket
 
 logger = logging.getLogger(__name__)
 
-# Use a fixed key for debugging/development purposes
+# Configuration constants
 DEBUG_MODE = True
 DEBUG_SERVER_KEY = "ABCDEFGH"  # Exactly 8 characters
-
-# Additional debug flags
 USE_FIXED_DEBUG_RESPONSE = True  # Use a fixed format response for INIT command
 USE_FIXED_DEBUG_KEY = True  # Use a fixed crypto key for encryption/decryption tests
 
+# Command constants
+CMD_INIT = 'INIT'
+CMD_ERRL = 'ERRL'
+CMD_PING = 'PING'
+CMD_INFO = 'INFO'
+CMD_VERS = 'VERS'
+CMD_DWNL = 'DWNL'
+CMD_GREQ = 'GREQ'
+CMD_SRSP = 'SRSP'
+
+# Response format constants
+RESPONSE_FORMATS = {
+    'format1': "LEN={}\r\nKEY={}",  # LEN first with CRLF - standard Delphi format
+    'format2': "LEN={}\nKEY={}",    # LEN first with LF only
+    'format3': "KEY={}\r\nLEN={}",  # KEY first with CRLF
+    'format4': "LEN={}\nKEY={}\n",  # Suggested in logs
+    'format5': "{}",                # Just the key
+    'format6': "200 OK\nLEN={}\nKEY={}\n"  # Status line + suggested format
+}
+
+# Timeout constants (seconds)
+CONNECTION_TIMEOUT = 300  # 5 minutes
+PENDING_CONNECTION_TIMEOUT = 120  # 2 minutes
+INACTIVITY_CHECK_INTERVAL = 60  # 1 minute
+
+# Key generation constants
+KEY_LENGTH = 8  # Fixed length for reliability
 
 class TCPConnection:
     """

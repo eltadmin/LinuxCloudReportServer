@@ -1,5 +1,51 @@
 ## Change Log for Linux Cloud Report Server
 
+### 2025-04-15 - Added Deployment and Verification Tools
+
+**Changes Made**:
+1. Created deployment scripts to simplify pushing updates to the server:
+   - `deploy_update.sh`: Bash script for Linux environments
+   - `deploy_update.bat`: Batch script for Windows environments
+2. Created verification tools to check server functionality:
+   - `verify_server.py`: Python script to test server connectivity and functionality
+   - `verify_server.bat`: Batch script to run the verification tool
+
+**Files Added**:
+- `deploy_update.sh`: Script to deploy changes to the server
+- `deploy_update.bat`: Windows version of the deployment script
+- `verify_server.py`: Server verification tool
+- `verify_server.bat`: Windows batch script to run the verification tool
+
+**Benefits**:
+- Simplified deployment process
+- Easy verification of server functionality after updates
+- Better debugging and troubleshooting capabilities
+
+### 2025-04-15 - Fix for Missing Constants in tcp_server.py
+
+**Issue**: Server fails to start due to undefined constants
+- Error messages in the logs:
+  - `NameError: name 'INACTIVITY_CHECK_INTERVAL' is not defined`
+  - `NameError: name 'CMD_INFO' is not defined`
+- The refactored code referenced constants that were not defined at the top of the file
+
+**Changes Made**:
+1. Added command constants (CMD_INIT, CMD_ERRL, CMD_PING, CMD_INFO, etc.)
+2. Added timeout constants:
+   - CONNECTION_TIMEOUT = 300 (5 minutes)
+   - PENDING_CONNECTION_TIMEOUT = 120 (2 minutes)
+   - INACTIVITY_CHECK_INTERVAL = 60 (1 minute)
+3. Added key generation constants (KEY_LENGTH)
+4. Added RESPONSE_FORMATS dictionary for consistent response formatting
+
+**Files Modified**:
+- `server/tcp_server.py`: Added missing constants
+
+**Expected Results**:
+- Server should start without errors
+- The connection cleanup task should run properly
+- Command handling should work correctly
+
 ### 2025-04-15 - Code Refactoring of tcp_server.py
 
 **Changes Made**:
