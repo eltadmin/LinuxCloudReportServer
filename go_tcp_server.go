@@ -246,8 +246,8 @@ func (s *TCPServer) handleConnection(conn *TCPConnection) {
 			if cmd == CMD_INIT {
 				log.Printf("====== SENDING INIT RESPONSE ======")
 				
-				// CRITICAL: Send EXACT raw response with NO line endings - this is the key fix
-				responseBytes := []byte(response)
+				// Add terminating null byte (0x00) for Delphi compatibility
+				responseBytes := append([]byte(response), 0)
 				
 				log.Printf("Raw response: '%s'", response)
 				log.Printf("Response bytes (hex): % x", responseBytes)

@@ -438,17 +438,21 @@ class TCPServer:
         try:
             # Convert string to bytes if necessary
             if isinstance(response, str):
-                # Check if this is an INIT response (has LEN and KEY)
+                # Check if this is an INIT response (has LEN= and KEY=)
                 is_init_response = "LEN=" in response and "KEY=" in response
                 
-                # Only add CRLF if not already present and it's not an INIT response
-                if not response.endswith("\r\n") and not is_init_response:
+                # For INIT responses, don't add any line endings
+                # For other responses, ensure CRLF if not already there
+                if not is_init_response and not response.endswith("\r\n"):
                     response += "\r\n"
+                
                 response_bytes = response.encode('latin1')
             else:
-                # For bytes responses, only add CRLF if not already present
+                # For bytes responses, only add CRLF if not already present and not INIT response
                 response_bytes = response
-                if not response_bytes.endswith(b'\r\n'):
+                is_init_bytes = b"LEN=" in response_bytes and b"KEY=" in response_bytes
+                
+                if not is_init_bytes and not response_bytes.endswith(b'\r\n'):
                     response_bytes += b'\r\n'
                 
             # Write and drain
@@ -563,7 +567,7 @@ class TCPServer:
             
             # Dispatch to the appropriate command handler
             if cmd == CMD_INIT:
-                return await self._handle_init(conn, parts)
+                return await self._handle_init_command(conn, parts)
             elif cmd == CMD_ERRL:
                 return await self._handle_error(conn, parts)
             elif cmd == CMD_PING:
@@ -599,43 +603,73 @@ class TCPServer:
         authenticated_commands = [CMD_INFO, CMD_SRSP, CMD_GREQ, CMD_VERS, CMD_DWNL]
         return cmd in authenticated_commands
 
-    async def _handle_init(self, conn: TCPConnection, command_parts: List[str]) -> bytes:
+    async def _handle_init_command(self, conn: TCPConnection, command_parts: List[str]) -> None:
         """
-        Handle the INIT command from the client.
+        Handle the INIT command from a client.
         
         Args:
             conn: The TCP connection
-            command_parts: The parts of the command
-            
-        Returns:
-            The response bytes to send back to the client
+            command_parts: The parts of the INIT command
         """
-        logger.info(f"Handling INIT command with parts: {command_parts}")
-        
         try:
-            # Parse parameters using helper method
-            params = self._parse_parameters(command_parts[1:] if len(command_parts) >= 2 else [])
-            logger.info(f"Extracted params: {params}")
+            # Parse the ID from the command
+            if len(command_parts) < 2:
+                logging.error(f"Invalid INIT command: {command_parts}")
+                await self._send_response(conn, "ERRS=Invalid INIT command format")
+                return
+
+            try:
+                client_id = int(command_parts[1].split('=')[1])
+                logging.info(f"Client ID: {client_id}")
+            except (IndexError, ValueError) as e:
+                logging.error(f"Failed to parse client ID: {e}")
+                await self._send_response(conn, "ERRS=Invalid client ID")
+                return
+
+            # Generate a server key using the key length
+            dictionary_part = self.key_manager.generate_random_key(4)
+            server_key = self.key_manager.generate_server_key()
             
-            # Get the client IP and hostname from the connection peer info instead of client_address
-            client_ip = params.get('IP', conn.peer[0] if conn.peer else 'unknown')
-            hostname = params.get('HOST', params.get('HST', 'UNKNOWN'))
-            dict_index = int(params.get('IDX', '0'))
+            # Use a fixed key length of 1 for now, matching the legacy code
+            key_length = 1
             
-            # Store the client hostname for key generation
-            conn.client_host = hostname
-            logger.info(f"Client hostname: {hostname}, Dictionary index: {dict_index}")
+            # Update connection with crypto key (server key + dictionary part + host info)
+            host_info = conn.writer.get_extra_info('peername')
+            host_first_chars = "NE"  # Default if we can't get actual host info
+            host_last_char = "-"     # Default if we can't get actual host info
             
-            # Prepare the response using the helper method
-            response_bytes, crypto_key = await self._prepare_init_response(conn, dict_index + 1)
+            if host_info and len(host_info) > 0:
+                host = str(host_info[0])
+                if host:
+                    if len(host) >= 2:
+                        host_first_chars = host[:2]
+                    if len(host) >= 1:
+                        host_last_char = host[-1]
             
-            # Return the response bytes directly
-            return response_bytes
+            # Construct the crypto key exactly as the original code does
+            crypto_key = f"{server_key}{dictionary_part}{host_first_chars}{host_last_char}"
+            conn.set_crypto_key(crypto_key)
             
+            # Format and send the response: KEY=server_key,LEN=key_length
+            response = self._format_init_response(server_key, key_length)
+            logging.info(f"Sending INIT response: {response}")
+            
+            # Log the detailed crypto key construction for debugging
+            logging.debug(f"Server Key: '{server_key}'")
+            logging.debug(f"Dictionary Part: '{dictionary_part}'")
+            logging.debug(f"Host First Chars: '{host_first_chars}'")
+            logging.debug(f"Host Last Char: '{host_last_char}'")
+            logging.debug(f"Final Crypto Key: '{crypto_key}'")
+            
+            # Send the response with no line endings
+            await self._send_response(conn, response)
+            
+            # Mark the connection as initialized
+            conn.initialized = True
+
         except Exception as e:
-            logger.error(f"Error handling INIT command: {e}", exc_info=True)
-            # Return a bytes response on error
-            return b'ERROR Internal server error'
+            logging.exception(f"Error handling INIT command: {e}")
+            await self._send_response(conn, "ERRS=Internal server error during initialization")
     
     def _parse_parameters(self, param_parts: List[str]) -> Dict[str, str]:
         """
@@ -754,9 +788,9 @@ class TCPServer:
         Returns:
             Formatted response string
         """
-        # Using format directly matching Delphi's TIdCmdTCPClient expectations
-        # The client expects LEN and KEY parameters on separate lines without a status code
-        response = f"LEN={key_length}\r\nKEY={server_key}"
+        # Format to match the Windows server's response exactly
+        # KEY=server_key,LEN=key_length (without any line endings)
+        response = f"KEY={server_key},LEN={key_length}"
         
         return response
         
@@ -877,4 +911,29 @@ class TCPServer:
             
         # Generate a random server key with KEY_LENGTH characters
         chars = string.ascii_uppercase + string.digits
-        return ''.join(random.choice(chars) for _ in range(KEY_LENGTH)) 
+        return ''.join(random.choice(chars) for _ in range(KEY_LENGTH))
+
+    async def start_server(self) -> None:
+        """Start the TCP server listening for connections."""
+        try:
+            # Ensure we have a key manager instance
+            if not self.key_manager:
+                self.key_manager = KeyManager()
+                logging.info("Initialized KeyManager")
+
+            self.server = await asyncio.start_server(
+                self._handle_client,
+                self.host,
+                self.port,
+                reuse_address=True,
+                reuse_port=True
+            )
+            
+            addr = self.server.sockets[0].getsockname()
+            logging.info(f'TCP Server started on {addr[0]}:{addr[1]}')
+            
+            async with self.server:
+                await self.server.serve_forever()
+        except Exception as e:
+            logging.error(f"Error starting TCP server: {e}")
+            raise 
