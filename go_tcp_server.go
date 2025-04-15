@@ -444,9 +444,9 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	cryptoKey := serverKey + cryptoDictPart + hostFirstChars + hostLastChar
 	conn.cryptoKey = cryptoKey
 	
-	// Возвращаемся к формату KEY=xxx\r\nLEN=y без завершающего \r\n
+	// Возвращаемся к формату LEN=y\r\nKEY=xxx без завершающего \r\n
 	// По анализу кода EXACTLY такого порядка ожидает Delphi клиент
-	response := fmt.Sprintf("KEY=%s\r\nLEN=%d", serverKey, lenValue)
+	response := fmt.Sprintf("LEN=%d\r\nKEY=%s", lenValue, serverKey)
 	
 	// DEBUG PRINT DETAILED INFORMATION
 	log.Printf("=========== INIT RESPONSE DETAILS ===========")
