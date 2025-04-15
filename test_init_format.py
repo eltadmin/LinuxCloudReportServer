@@ -12,7 +12,7 @@ import random
 import string
 
 # Server details (adjust as needed)
-HOST = '127.0.0.1'  # localhost
+HOST = '10.150.40.8'  # localhost
 PORT = 8016         # default TCP port
 
 def main():

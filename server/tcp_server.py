@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 import json
 import zlib
 from datetime import datetime, timedelta
@@ -26,7 +26,21 @@ USE_FIXED_DEBUG_KEY = True  # Use a fixed crypto key for encryption/decryption t
 
 
 class TCPConnection:
+    """
+    Represents a TCP connection to a client with encryption capabilities.
+    
+    This class handles the communication with a single client, including
+    encryption and decryption of messages, and connection state tracking.
+    """
+    
     def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        """
+        Initialize a new TCP connection with the given reader and writer.
+        
+        Args:
+            reader: The asyncio stream reader for this connection
+            writer: The asyncio stream writer for this connection
+        """
         self.reader = reader
         self.writer = writer
         self.client_id: Optional[str] = None
@@ -43,8 +57,16 @@ class TCPConnection:
         self.last_activity = datetime.now()
         self.connection_time = datetime.now()
 
-    def encrypt_data(self, data):
-        """Encrypts data using the crypto key"""
+    def encrypt_data(self, data: str) -> Optional[str]:
+        """
+        Encrypt data using the negotiated crypto key.
+        
+        Args:
+            data: The string data to encrypt
+            
+        Returns:
+            The encrypted data as a string, or None if encryption fails
+        """
         if not self.crypto_key:
             self.last_error = "Crypto key is not negotiated"
             return None
@@ -58,8 +80,16 @@ class TCPConnection:
             
         return result
         
-    def decrypt_data(self, data):
-        """Decrypts data using the crypto key"""
+    def decrypt_data(self, data: str) -> Optional[str]:
+        """
+        Decrypt data using the negotiated crypto key.
+        
+        Args:
+            data: The encrypted data string
+            
+        Returns:
+            The decrypted data as a string, or None if decryption fails
+        """
         if not self.crypto_key:
             self.last_error = "Crypto key is not negotiated"
             return None
@@ -74,11 +104,16 @@ class TCPConnection:
         return result
 
     def update_activity(self):
-        """Update the last activity timestamp"""
+        """Update the last activity timestamp to the current time."""
         self.last_activity = datetime.now()
         
-    def test_encryption(self):
-        """Test the encryption with a known test string to verify it works correctly"""
+    def test_encryption(self) -> bool:
+        """
+        Test the encryption with known test strings to verify it works correctly.
+        
+        Returns:
+            True if encryption test is successful, False otherwise
+        """
         if not self.crypto_key:
             self.last_error = "Crypto key is not set for testing"
             return False
@@ -127,91 +162,177 @@ class TCPConnection:
             logger.error(f"Exception during encryption test: {e}", exc_info=True)
             return False
 
+    async def close(self):
+        """Close the connection gracefully."""
+        try:
+            self.writer.close()
+            await self.writer.wait_closed()
+            logger.debug(f"Connection to {self.peer} closed successfully")
+        except Exception as e:
+            logger.error(f"Error closing connection to {self.peer}: {e}")
+            
+    def __str__(self) -> str:
+        """Return a string representation of this connection."""
+        return f"TCPConnection(peer={self.peer}, client_id={self.client_id}, host={self.client_host})"
+
 
 class TCPServer:
+    """
+    TCP Server implementation that handles multiple client connections.
+    
+    This class manages the TCP server and all client connections, including
+    their authentication state, command processing, and connection cleanup.
+    """
+    
     def __init__(self, report_server):
+        """
+        Initialize a new TCP server tied to the given report server.
+        
+        Args:
+            report_server: The main report server instance that owns this TCP server
+        """
         self.report_server = report_server
         self.server = None
-        self.connections: Dict[str, TCPConnection] = {}
+        self.connections: Dict[str, TCPConnection] = {}  # Authenticated clients with client_id
         self.pending_connections: List[TCPConnection] = []  # Connections without client_id yet
+        self.running = False
+        self._cleanup_task = None
         
     async def start(self, host: str, port: int):
-        """Start TCP server."""
-        self.server = await asyncio.start_server(
-            self.handle_connection, host, port
-        )
+        """
+        Start the TCP server on the given host and port.
         
-        # Start background task to check for inactive connections
-        asyncio.create_task(self.check_inactive_connections())
+        Args:
+            host: The hostname or IP address to bind to
+            port: The port number to listen on
+        """
+        logger.info(f"Starting TCP server on {host}:{port}")
+        try:
+            self.server = await asyncio.start_server(
+                self.handle_connection, host, port
+            )
+            self.running = True
+            
+            # Start background task to check for inactive connections
+            self._cleanup_task = asyncio.create_task(
+                self.check_inactive_connections(),
+                name="tcp_connection_cleanup"
+            )
+            logger.info(f"TCP server started and listening on {host}:{port}")
+            
+        except Exception as e:
+            logger.error(f"Failed to start TCP server: {e}", exc_info=True)
+            raise
         
     async def stop(self):
-        """Stop TCP server."""
+        """Stop the TCP server and close all connections."""
+        logger.info("Stopping TCP server...")
+        self.running = False
+        
+        # Cancel cleanup task
+        if self._cleanup_task and not self._cleanup_task.done():
+            self._cleanup_task.cancel()
+            try:
+                await self._cleanup_task
+            except asyncio.CancelledError:
+                pass
+            
+        # Close server
         if self.server:
             self.server.close()
             await self.server.wait_closed()
+            logger.info("TCP server stopped")
             
         # Close all connections
-        for conn in self.connections.values():
+        await self._close_all_connections()
+            
+    async def _close_all_connections(self):
+        """Close all active connections."""
+        # Close authenticated connections
+        for client_id, conn in list(self.connections.items()):
             try:
-                conn.writer.close()
-                await conn.writer.wait_closed()
+                logger.info(f"Closing connection to client {client_id}")
+                await conn.close()
+                self.connections.pop(client_id, None)
             except Exception as e:
-                logger.error(f"Error closing connection: {e}")
+                logger.error(f"Error closing connection to client {client_id}: {e}")
                 
         # Close all pending connections
-        for conn in self.pending_connections:
+        for conn in list(self.pending_connections):
             try:
-                conn.writer.close()
-                await conn.writer.wait_closed()
+                logger.info(f"Closing pending connection to {conn.peer}")
+                await conn.close()
+                self.pending_connections.remove(conn)
             except Exception as e:
                 logger.error(f"Error closing pending connection: {e}")
-                
+        
+        logger.info("All connections closed")
+        
     async def check_inactive_connections(self):
-        """Periodically check for and remove inactive connections."""
-        while True:
+        """
+        Periodically check for and remove inactive connections.
+        
+        This task runs in the background and performs cleanup of connections
+        that have been inactive for too long.
+        """
+        logger.info("Starting connection cleanup task")
+        
+        while self.running:
             try:
                 now = datetime.now()
-                # Check authenticated connections
-                clients_to_remove = []
+                removed_count = 0
                 
-                for client_id, conn in self.connections.items():
-                    # If last activity is more than 5 minutes ago, remove the connection
-                    if (now - conn.last_activity).total_seconds() > 300:
+                # Check authenticated connections
+                for client_id, conn in list(self.connections.items()):
+                    # If last activity is more than CONNECTION_TIMEOUT seconds ago, remove the connection
+                    if (now - conn.last_activity).total_seconds() > CONNECTION_TIMEOUT:
                         logger.info(f"Removing inactive connection for client {client_id}")
-                        clients_to_remove.append(client_id)
-                        
-                for client_id in clients_to_remove:
-                    conn = self.connections.pop(client_id)
-                    try:
-                        conn.writer.close()
-                        await conn.writer.wait_closed()
-                    except Exception as e:
-                        logger.error(f"Error closing inactive connection: {e}")
+                        self.connections.pop(client_id)
+                        await conn.close()
+                        removed_count += 1
                 
                 # Check pending connections (not yet authenticated with client ID)
                 pending_to_remove = []
                 for i, conn in enumerate(self.pending_connections):
-                    # If connection is older than 2 minutes and still not authenticated, remove it
-                    if (now - conn.connection_time).total_seconds() > 120:
+                    # If connection is older than PENDING_CONNECTION_TIMEOUT seconds and still not authenticated, remove it
+                    if (now - conn.connection_time).total_seconds() > PENDING_CONNECTION_TIMEOUT:
                         pending_to_remove.append(i)
                 
                 # Remove from highest index to lowest to avoid shifting issues
                 for i in sorted(pending_to_remove, reverse=True):
-                    try:
+                    if i < len(self.pending_connections):  # Safety check
                         conn = self.pending_connections.pop(i)
-                        conn.writer.close()
-                        await conn.writer.wait_closed()
-                    except Exception as e:
-                        logger.error(f"Error closing pending connection: {e}")
+                        logger.info(f"Removing pending connection {conn.peer} due to inactivity")
+                        await conn.close()
+                        removed_count += 1
                 
-                await asyncio.sleep(60)  # Check every minute
+                if removed_count > 0:
+                    logger.info(f"Removed {removed_count} inactive connections. Active: {len(self.connections)}, Pending: {len(self.pending_connections)}")
                 
+                # Sleep before next check
+                await asyncio.sleep(INACTIVITY_CHECK_INTERVAL)
+                
+            except asyncio.CancelledError:
+                logger.info("Connection cleanup task cancelled")
+                break
             except Exception as e:
-                logger.error(f"Error in connection checker: {e}", exc_info=True)
-                await asyncio.sleep(60)  # Wait a minute and try again
+                logger.error(f"Error in connection cleanup task: {e}", exc_info=True)
+                await asyncio.sleep(INACTIVITY_CHECK_INTERVAL)  # Wait before retry
+        
+        logger.info("Connection cleanup task stopped")
             
     async def handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-        """Handle new TCP connection."""
+        """
+        Handle a new TCP connection from a client.
+        
+        This method is called each time a new client connects to the server.
+        It manages the connection lifecycle, reading commands and handling them.
+        
+        Args:
+            reader: The asyncio stream reader for reading from the client
+            writer: The asyncio stream writer for writing to the client
+        """
+        # Create connection object and add to pending connections
         conn = TCPConnection(reader, writer)
         peer = conn.peer
         logger.info(f"New TCP connection from {peer}")
@@ -220,46 +341,22 @@ class TCPServer:
         self.pending_connections.append(conn)
         
         try:
-            while True:
-                # Read command
-                try:
-                    data = await reader.readuntil(b'\n')
-                    command = data.decode('utf-8', errors='replace').strip()
-                    logger.info(f"Received command from {peer}: {command}")
-                except asyncio.IncompleteReadError:
-                    logger.info(f"Client {peer} disconnected")
-                    break
-                except Exception as e:
-                    logger.error(f"Error reading from socket: {e}")
+            while self.running:
+                # Read command from client
+                command = await self._read_command(conn)
+                if command is None:
+                    # Connection closed or error
                     break
                 
                 # Update activity timestamp
                 conn.update_activity()
                 
-                if not command:
-                    logger.warning(f"Empty command received from {peer}")
-                    continue
-                    
-                # Handle command
+                # Handle the command
                 response = await self.handle_command(conn, command, peer)
                 
+                # Send response if any
                 if response:
-                    try:
-                        # Log response for debugging
-                        if isinstance(response, bytes):
-                            log_response = response[:100]  # First 100 bytes for logging
-                            try:
-                                log_text = log_response.decode('ascii', errors='replace')
-                                logger.debug(f"Response first 100 bytes: {log_text}")
-                            except:
-                                logger.debug(f"Response (binary): {len(response)} bytes")
-                        
-                        # Send response
-                        writer.write(response)
-                        await writer.drain()
-                    except Exception as e:
-                        logger.error(f"Error sending response to {peer}: {e}", exc_info=True)
-                        break
+                    await self._send_response(conn, response)
                     
         except asyncio.CancelledError:
             logger.info(f"Connection handling for {peer} was cancelled")
@@ -267,24 +364,90 @@ class TCPServer:
             logger.error(f"Error handling client {peer}: {e}", exc_info=True)
             logger.error(traceback.format_exc())
         finally:
-            # Cleanup
-            if conn.client_id and conn.client_id in self.connections:
-                del self.connections[conn.client_id]
+            # Cleanup connection
+            await self._cleanup_connection(conn)
+    
+    async def _read_command(self, conn: TCPConnection) -> Optional[str]:
+        """
+        Read a command from the client.
+        
+        Args:
+            conn: The TCP connection to read from
             
-            # Remove from pending connections if present
-            if conn in self.pending_connections:
-                self.pending_connections.remove(conn)
-                
-            try:
-                writer.close()
-                await writer.wait_closed()
-            except Exception as e:
-                logger.error(f"Error closing writer: {e}")
+        Returns:
+            The command string or None if the connection is closed
+        """
+        try:
+            data = await conn.reader.readuntil(b'\n')
+            command = data.decode('utf-8', errors='replace').strip()
+            logger.info(f"Received command from {conn.peer}: {command}")
+            return command
+        except asyncio.IncompleteReadError:
+            logger.info(f"Client {conn.peer} disconnected")
+            return None
+        except Exception as e:
+            logger.error(f"Error reading from socket: {e}")
+            return None
+    
+    async def _send_response(self, conn: TCPConnection, response: bytes) -> bool:
+        """
+        Send a response to the client.
+        
+        Args:
+            conn: The TCP connection to send to
+            response: The response data to send
             
+        Returns:
+            True if the response was sent successfully, False otherwise
+        """
+        try:
+            # Log response for debugging
+            if isinstance(response, bytes):
+                log_response = response[:100]  # First 100 bytes for logging
+                try:
+                    log_text = log_response.decode('ascii', errors='replace')
+                    logger.debug(f"Response first 100 bytes: {log_text}")
+                except:
+                    logger.debug(f"Response (binary): {len(response)} bytes")
+            
+            # Send response
+            conn.writer.write(response)
+            await conn.writer.drain()
+            return True
+        except Exception as e:
+            logger.error(f"Error sending response to {conn.peer}: {e}", exc_info=True)
+            return False
+    
+    async def _cleanup_connection(self, conn: TCPConnection):
+        """
+        Clean up a connection that is being closed.
+        
+        Args:
+            conn: The TCP connection to clean up
+        """
+        # Remove from connections dict if authenticated
+        if conn.client_id and conn.client_id in self.connections:
+            del self.connections[conn.client_id]
+        
+        # Remove from pending connections if present
+        if conn in self.pending_connections:
+            self.pending_connections.remove(conn)
+            
+        # Close the connection
+        await conn.close()
+
     def check_duplicate_client_id(self, client_id: str, current_conn: TCPConnection) -> bool:
         """
         Check if a client ID already exists in the connections dictionary.
+        
         If it exists, close the old connection and return True.
+        
+        Args:
+            client_id: The client ID to check
+            current_conn: The current connection that wants to use this ID
+            
+        Returns:
+            True if a duplicate was found and handled, False otherwise
         """
         if client_id in self.connections:
             old_conn = self.connections[client_id]
@@ -295,516 +458,405 @@ class TCPServer:
             logger.warning(f"Duplicate client ID detected: {client_id}. Closing old connection.")
             
             # Schedule closing the old connection asynchronously
-            async def close_old_connection():
-                try:
-                    old_conn.writer.close()
-                    await old_conn.writer.wait_closed()
-                except Exception as e:
-                    logger.error(f"Error closing duplicate connection: {e}")
-                    
-            asyncio.create_task(close_old_connection())
+            asyncio.create_task(
+                self._handle_duplicate_connection(old_conn, client_id),
+                name=f"close_duplicate_{client_id}"
+            )
             return True
             
         return False
+    
+    async def _handle_duplicate_connection(self, conn: TCPConnection, client_id: str):
+        """
+        Handle a duplicate connection by closing it.
+        
+        Args:
+            conn: The connection to close
+            client_id: The client ID that was duplicated
+        """
+        try:
+            logger.info(f"Closing duplicate connection for client ID: {client_id}")
+            await conn.close()
+            # Remove from connections if still present
+            if client_id in self.connections and self.connections[client_id] is conn:
+                del self.connections[client_id]
+        except Exception as e:
+            logger.error(f"Error closing duplicate connection: {e}")
             
     async def handle_command(self, conn: TCPConnection, command: str, peer: tuple) -> bytes:
-        """Handle TCP command."""
+        """
+        Handle a TCP command from a client.
+        
+        This method processes the command and returns the response to send back.
+        
+        Args:
+            conn: The TCP connection that sent the command
+            command: The command string received from the client
+            peer: The peer address tuple (host, port)
+            
+        Returns:
+            The response bytes to send back to the client
+        """
+        # Skip empty commands
+        if not command.strip():
+            logger.warning(f"Empty command received from {peer}")
+            return b''
+            
         try:
             parts = command.split(' ')
             cmd = parts[0].upper()
             logger.debug(f"Processing command: {cmd} with parts: {parts}")
             
             # Check if connection is authenticated for commands that require it
-            authenticated_commands = ['INFO', 'SRSP', 'GREQ', 'VERS', 'DWNL']
-            if cmd in authenticated_commands and not conn.authenticated:
+            if self._requires_authentication(cmd) and not conn.authenticated:
                 logger.warning(f"Unauthenticated connection tried to use {cmd} command")
                 return b'ERROR Authentication required'
             
-            if cmd == 'INIT':
-                # Parse INIT command parameters
-                params = {}
-                for param in parts[1:]:
-                    if '=' in param:
-                        key, value = param.split('=', 1)
-                        params[key.upper()] = value
-                logger.info(f"Parsed INIT parameters: {params}")
-                
-                # Validate required parameters
-                required_params = ['ID', 'DT', 'TM', 'HST']
-                for param in required_params:
-                    if param not in params:
-                        error_msg = f'ERROR Missing required parameter: {param}'
-                        logger.error(f"INIT validation failed: {error_msg}")
-                        return error_msg.encode('utf-8')
-                
-                # Validate key ID
-                try:
-                    key_id = int(params['ID'])
-                    if not 1 <= key_id <= 10:
-                        error_msg = 'ERROR Invalid key ID. Must be between 1 and 10'
-                        logger.error(f"INIT validation failed: {error_msg}")
-                        return error_msg.encode('utf-8')
-                except ValueError:
-                    error_msg = 'ERROR Invalid key ID format'
-                    logger.error(f"INIT validation failed: {error_msg}")
-                    return error_msg.encode('utf-8')
-                
-                # Store client info
-                conn.client_host = params['HST']
-                conn.app_type = params.get('ATP', 'UnknownApp')
-                conn.app_version = params.get('AVR', '1.0.0.0')
-                logger.info(f"Stored client info: host={conn.client_host}, type={conn.app_type}, version={conn.app_version}")
-                
-                # Generate server key
-                if DEBUG_MODE:
-                    server_key = DEBUG_SERVER_KEY
-                else:
-                    key_len = 8  # Fixed length for reliability
-                    server_key = ''.join(random.choices(string.ascii_letters + string.digits, k=key_len))
-                
-                # Store key info
-                key_len = len(server_key)
-                conn.server_key = server_key
-                conn.key_length = key_len
-                
-                # Get dictionary entry
-                dict_entry = CRYPTO_DICTIONARY[key_id - 1]
-                crypto_dict_part = dict_entry[:key_len]
-                
-                # Extract host parts for key generation
-                host_first_chars = conn.client_host[:2]  # First 2 chars
-                orig_host_last_char = conn.client_host[-1:]  # Last char
-                
-                # Special case for cleaning hostname
-                logger.info(f"Host parts: original='{host_first_chars + orig_host_last_char}', cleaned='{conn.client_host[:3]}'")
-                
-                # Test multiple key combinations for Delphi compatibility
-                key_variants = {
-                    "оригинален с тире": server_key + crypto_dict_part + host_first_chars + orig_host_last_char,
-                    "с първи 3 букви от хоста": server_key + crypto_dict_part + conn.client_host[:3],
-                    "с първа буква от хоста": server_key + crypto_dict_part + conn.client_host[0],
-                    "само частта от речника": server_key + crypto_dict_part,
-                    "само сървърски ключ": server_key,
-                }
-                
-                # Test each key variant
-                working_key = None
-                working_key_name = None
-                
-                for variant_name, test_key in key_variants.items():
-                    logger.info(f"Testing key variant '{variant_name}': {test_key}")
-                    # Create a temporary connection with this key
-                    temp_conn = TCPConnection(conn.reader, conn.writer)
-                    temp_conn.crypto_key = test_key
-                    
-                    # Test encryption
-                    if temp_conn.test_encryption():
-                        logger.info(f"Key variant '{variant_name}' works: {test_key}")
-                        working_key = test_key
-                        working_key_name = variant_name
-                        break
-                
-                # Use the working key or default to the original
-                if working_key:
-                    conn.crypto_key = working_key
-                    logger.info(f"Using crypto key: {conn.crypto_key} ({working_key_name})")
-                else:
-                    # Construct crypto key (original method)
-                    conn.crypto_key = server_key + crypto_dict_part + host_first_chars + orig_host_last_char
-                    logger.info(f"Using default crypto key: {conn.crypto_key} (no variants worked)")
-                
-                # Test encryption with the selected key
-                logger.info("Running thorough crypto key verification tests...")
-                test_result = conn.test_encryption()
-                if not test_result:
-                    logger.error(f"Encryption test failed with key: {conn.crypto_key}")
-                    logger.error(f"Last error: {conn.last_error}")
-                else:
-                    logger.info("All crypto validation tests passed successfully!")
-                
-                # Important: Try a version that fully matches a standard Delphi response format
-                # Instead of including the count at the beginning (which is used by TStringList.SaveToStream),
-                # just send the key-value pairs with CRLF line endings.
-                # This is the most common format for Delphi applications expecting plain key=value pairs.
-                
-                # Use SIMPLIFIED RESPONSE FORMAT optimized for Delphi
-                logger.info("Using SIMPLIFIED RESPONSE FORMAT optimized for Delphi")
-                
-                # Reset to the absolute simplest format
-                # Use fixed key with known working values
-                debug_server_key = "ABCDEFGH"  # Exactly 8 characters length
-                debug_key_len = len(debug_server_key)
-                
-                # Format 1: LEN first with CRLF, no trailing CRLF - This is what the Delphi client expects
-                format1 = f"LEN={debug_key_len}\r\nKEY={debug_server_key}"
-                
-                # Format 2: LEN first with LF only, no trailing LF
-                format2 = f"LEN={debug_key_len}\nKEY={debug_server_key}"
-                
-                # Format 3: KEY first with CRLF, no trailing CRLF
-                format3 = f"KEY={debug_server_key}\r\nLEN={debug_key_len}"
-                
-                # Format 4: Exactly as suggested in the error logs
-                format4 = f"LEN={debug_key_len}\nKEY={debug_server_key}\n"
-                
-                # Format 5: Just the key
-                format5 = f"{debug_server_key}"
-                
-                # Format 6: Status line + suggested format
-                format6 = f"200 OK\nLEN={debug_key_len}\nKEY={debug_server_key}\n"
-                
-                # Choose which format to use - USING FORMAT 1 (standard Delphi format with CRLF)
-                # Based on client code analysis, this is what the client expects
-                simple_format = format1
-                clean_response = simple_format.encode('ascii')
-                
-                logger.info(f"SIMPLIFIED RESPONSE: {clean_response}")
-                logger.info(f"RESPONSE HEX: {' '.join([f'{b:02x}' for b in clean_response])}")
-                
-                # Show all format options for debugging
-                logger.info(f"Format 1 (LEN first, CRLF): {format1.encode('ascii')}")
-                logger.info(f"Format 2 (LEN first, LF): {format2.encode('ascii')}")
-                logger.info(f"Format 3 (KEY first, CRLF): {format3.encode('ascii')}")
-                logger.info(f"Format 4 (Suggested in logs): {format4.encode('ascii')}")
-                logger.info(f"Format 5 (Just key): {format5.encode('ascii')}")
-                logger.info(f"Format 6 (Status + Suggested): {format6.encode('ascii')}")
-                
-                # Override the crypto key for debugging
-                if USE_FIXED_DEBUG_KEY:
-                    # Force a known working key
-                    dict_entry = CRYPTO_DICTIONARY[key_id - 1]
-                    crypto_dict_part = dict_entry[:debug_key_len]
-                    host_first_chars = conn.client_host[:2]
-                    orig_host_last_char = conn.client_host[-1:]
-                    conn.crypto_key = debug_server_key + crypto_dict_part + host_first_chars + orig_host_last_char
-                    
-                    logger.info(f"DEBUG MODE: Using crypto key: {conn.crypto_key}")
-                    
-                    # Test that encryption works with this key
-                    logger.info("DEBUG MODE: Testing encryption with key...")
-                    test_result = conn.test_encryption()
-                    logger.info(f"DEBUG MODE: Encryption test result: {test_result}")
-                
-                # Use the debug response
-                logger.info(f"INIT raw response bytes: {' '.join([f'{b:02x}' for b in clean_response])}")
-                response = clean_response
-                
-                # Final normalized response for clear logging
-                logger.info(f"Final normalized response: {response}")
-                
-                # Log the crypto key for debugging
-                logger.info(f"Using crypto key for client {conn.client_host}: {conn.crypto_key}")
-                
-                conn.authenticated = True
-                return response
-                
-            elif cmd == 'ERRL':
-                # Handle error logging from client
-                error_msg = ' '.join(parts[1:])
-                logger.error(f"Client error: {error_msg}")
-                
-                # Log detailed information about the error
-                if "Unable to initizlize communication" in error_msg:
-                    logger.error("Analysis: Problem with INIT response format or incorrect crypto key")
-                    logger.error(f"INIT parameters: ID={conn.client_id}, host={conn.client_host}")
-                    logger.error(f"Server key: {conn.server_key}, length: {conn.key_length}")
-                    logger.error(f"Crypto key: {conn.crypto_key}")
-                    # Create the proper format string for reference
-                    proper_format = f"LEN={conn.key_length}\r\nKEY={conn.server_key}"
-                    logger.error(f"Correct response format: '{proper_format}'")
-                    
-                    # Add more diagnostic information
-                    if hasattr(conn, 'last_error') and conn.last_error:
-                        logger.error(f"Last error: '{conn.last_error}'")
-                    
-                    # Log error parts for better analysis
-                    logger.error(f"ERRL command full data: {command}")
-                    parts = command.split()
-                    logger.error(f"ERRL command parts: {parts}")
-                    for i, part in enumerate(parts[1:], 1):
-                        logger.error(f"ERRL part {i}: '{part}'")
-                    
-                    logger.error("Анализ: Проблем с форматирането на INIT отговора или неправилен криптиращ ключ.")
-                    logger.error(f"INIT параметри: ID={conn.client_id}, host={conn.client_host}")
-                    logger.error(f"Изпратен ключ: {conn.server_key}, дължина: {conn.key_length}")
-                    
-                    # Communication analysis
-                    logger.error(f"===== Last Client-Server Communication =====")
-                    logger.error(f"Client ID from command: unknown")
-                    logger.error(f"Delphi client would parse using: FTCPClient.LastCmdResult.Text.Values['LEN']")
-                    logger.error(f"Delphi client would parse using: FTCPClient.LastCmdResult.Text.Values['KEY']")
-                    logger.error(f"Expected client key creation: KEY + dict_part + hostname_chars")
-                    logger.error(f"Fixed response format (for next attempt): 'LEN={conn.key_length}\r\nKEY={conn.server_key}'")
-                    
-                    # Host components analysis
-                    logger.error("Компоненти на ключа:")
-                    logger.error(f"  server_key: {conn.server_key}")
-                    logger.error(f"  dict_part: {CRYPTO_DICTIONARY[0][:8]}")
-                    logger.error("  host parts variance:")
-                    logger.error(f"    first 2 chars: {conn.client_host[:2]}")
-                    logger.error(f"    last char: {conn.client_host[-1:]}")
-                    logger.error(f"    first 2 + last: {conn.client_host[:2] + conn.client_host[-1:]}")
-                    
-                    logger.error(f"Последен успешен тест на криптирането със сървърски ключ: {conn.crypto_key}")
-                    test_result = conn.test_encryption()
-                    logger.error(f"Тест на криптирането: {test_result}")
-                
-                return b'OK'
-                
-            elif cmd == 'PING':
-                conn.last_ping = datetime.now()
-                return b'PONG'
-                
-            elif cmd == 'INFO':
-                # Handle client ID initialization
-                # Check if crypto key is negotiated
-                if not conn.crypto_key:
-                    logger.error("Crypto key is not negotiated")
-                    return b'ERROR Crypto key is not negotiated'
-                
-                # Get encrypted data from client
-                if len(parts) < 2 or not parts[1].startswith('DATA='):
-                    return b'ERROR Missing DATA parameter'
-                
-                encrypted_data = parts[1][5:]  # Remove DATA= prefix
-                logger.debug(f"Received encrypted data: {encrypted_data}")
-                
-                # Try to decrypt the data
-                decrypted_data = conn.decrypt_data(encrypted_data)
-                if not decrypted_data:
-                    logger.error(f"Decryption failed: {conn.last_error}")
-                    return b'ERROR Decryption failed'
-                
-                logger.info(f"Decrypted INFO data: {decrypted_data}")
-                
-                # Parse client info from decrypted data
-                try:
-                    # Parse decrypted data as key=value pairs
-                    info = {}
-                    for pair in re.split(r'\r?\n', decrypted_data):
-                        if '=' in pair:
-                            key, value = pair.split('=', 1)
-                            info[key.strip()] = value.strip()
-                    
-                    logger.info(f"Parsed client info: {info}")
-                    
-                    # Look for client ID
-                    client_id = None
-                    for id_key in ['ID', 'ClientID', 'CLIENTID', 'id', 'clientid']:
-                        if id_key in info:
-                            client_id = info[id_key]
-                            break
-                    
-                    if client_id:
-                        conn.client_id = client_id
-                        logger.info(f"Client ID is set to {conn.client_id}")
-                        
-                        # Add to authenticated connections and remove from pending
-                        self.connections[conn.client_id] = conn
-                        if conn in self.pending_connections:
-                            self.pending_connections.remove(conn)
-                        
-                        # Format response in Delphi TStrings format
-                        response_data = {
-                            'ID': conn.client_id,
-                            'STATUS': 'OK',
-                            'TIME': datetime.now().strftime('%H%M%S'),
-                            'DATE': datetime.now().strftime('%y%m%d')
-                        }
-                        
-                        # Convert to TStrings format
-                        response_text = '\r\n'.join([f"{k}={v}" for k, v in response_data.items()])
-                        response_text += '\r\n\r\n'  # Add empty line at the end
-                        
-                        # Encrypt response
-                        encrypted_response = conn.encrypt_data(response_text)
-                        
-                        if encrypted_response:
-                            # Return as simple DATA with encrypted data
-                            return f"DATA={encrypted_response}\r\n\r\n".encode('utf-8')
-                        else:
-                            return b'ERROR Failed to encrypt response'
-                    else:
-                        logger.error("Missing client ID in INFO data")
-                        return b'ERROR Missing client ID'
-                    
-                except Exception as e:
-                    logger.error(f"Error parsing INFO data: {e}", exc_info=True)
-                    return f'ERROR {str(e)}'.encode('utf-8')
-                
-            elif cmd == 'VERS':
-                # Handle version check and updates list
-                try:
-                    # Get update file list with version information
-                    updates = []
-                    update_folder = Path(self.report_server.update_folder)
-                    
-                    if not update_folder.exists():
-                        logger.warning(f"Update folder {update_folder} does not exist")
-                        return json.dumps({'updates': []}).encode('utf-8')
-                    
-                    for file in update_folder.glob('*'):
-                        if file.is_file():
-                            updates.append({
-                                'name': file.name,
-                                'size': file.stat().st_size,
-                                'modified': datetime.fromtimestamp(file.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
-                            })
-                    
-                    if conn.crypto_key:
-                        # If we have a crypto key, encrypt the response
-                        response_text = json.dumps({'updates': updates})
-                        encrypted_response = conn.encrypt_data(response_text)
-                        if not encrypted_response:
-                            logger.error(f"Failed to encrypt VERS response: {conn.last_error}")
-                            return f'ERROR Failed to encrypt VERS response: {conn.last_error}'.encode('utf-8')
-                        return f'200 OK\r\nDATA={encrypted_response}\r\n\r\n'.encode('utf-8')
-                    else:
-                        # Plain response if no crypto key
-                        return json.dumps({'updates': updates}).encode('utf-8')
-                        
-                except Exception as e:
-                    logger.error(f"Error handling VERS command: {e}", exc_info=True)
-                    return f'ERROR Failed to get updates list: {str(e)}'.encode('utf-8')
-                
-            elif cmd == 'DWNL':
-                # Handle download of update files
-                try:
-                    if len(parts) < 2:
-                        return b'ERROR Missing filename parameter'
-                        
-                    filename = parts[1]
-                    file_path = Path(self.report_server.update_folder) / filename
-                    
-                    if not file_path.exists() or not file_path.is_file():
-                        logger.error(f"Requested file not found: {filename}")
-                        return b'ERROR File not found'
-                    
-                    # Read file and prepare for sending
-                    with open(file_path, 'rb') as f:
-                        file_data = f.read()
-                    
-                    # Compress data with zlib
-                    compressed_data = zlib.compress(file_data)
-                    file_size = len(compressed_data)
-                    
-                    # First send OK response with file size
-                    response = f'200 OK\r\nSIZE={file_size}\r\n\r\n'.encode()
-                    logger.info(f"Sending DWNL response header: status=200, SIZE={file_size}")
-                    conn.writer.write(response)
-                    await conn.writer.drain()
-                    
-                    # Then send the file data
-                    logger.info(f"Sending file data: {filename} ({file_size} bytes compressed)")
-                    conn.writer.write(compressed_data)
-                    await conn.writer.drain()
-                    
-                    logger.info(f"Sent file {filename} ({file_size} bytes compressed) to {peer}")
-                    return b''  # We've already sent the response directly
-                    
-                except Exception as e:
-                    logger.error(f"Error handling DWNL command: {e}", exc_info=True)
-                    return f'ERROR Failed to download file: {str(e)}'.encode('utf-8')
-                
-            elif cmd == 'GREQ':
-                # Handle report generation requests
-                try:
-                    # Check for required parameters
-                    if len(parts) < 2:
-                        return b'ERROR Missing report type parameter'
-                    
-                    report_type = parts[1]
-                    params = {}
-                    
-                    # Parse parameters
-                    if len(parts) > 2:
-                        if parts[2].startswith('DATA='):
-                            encrypted_data = parts[2][5:]  # Remove DATA= prefix
-                            
-                            # Decrypt data if crypto key is available
-                            if conn.crypto_key:
-                                decrypted_data = conn.decrypt_data(encrypted_data)
-                                if not decrypted_data:
-                                    logger.error(f"Failed to decrypt GREQ data: {conn.last_error}")
-                                    return f'ERROR Failed to decrypt parameters: {conn.last_error}'.encode('utf-8')
-                                
-                                try:
-                                    params = json.loads(decrypted_data)
-                                except json.JSONDecodeError:
-                                    logger.error("Invalid JSON in decrypted GREQ data")
-                                    return b'ERROR Invalid JSON parameters'
-                            else:
-                                try:
-                                    params = json.loads(encrypted_data)
-                                except json.JSONDecodeError:
-                                    logger.error("Invalid JSON in GREQ data")
-                                    return b'ERROR Invalid JSON parameters'
-                    
-                    # Generate report
-                    report_result = await self.report_server.db.generate_report(report_type, params)
-                    
-                    # Convert result to JSON
-                    result_json = json.dumps(report_result)
-                    
-                    # Encrypt response if crypto key is available
-                    if conn.crypto_key:
-                        encrypted_response = conn.encrypt_data(result_json)
-                        if not encrypted_response:
-                            logger.error(f"Failed to encrypt GREQ response: {conn.last_error}")
-                            return f'ERROR Failed to encrypt response: {conn.last_error}'.encode('utf-8')
-                        return f'200 OK\nDATA={encrypted_response}'.encode('utf-8')
-                    else:
-                        return f'200 OK\n{result_json}'.encode('utf-8')
-                        
-                except Exception as e:
-                    logger.error(f"Error handling GREQ command: {e}", exc_info=True)
-                    return f'ERROR Failed to generate report: {str(e)}'.encode('utf-8')
-                
-            elif cmd == 'SRSP':
-                # Handle client response to server requests
-                try:
-                    # Parse parameters
-                    cmd_counter = None
-                    data = None
-                    
-                    for param in parts[1:]:
-                        if param.startswith('CMD='):
-                            cmd_counter = param[4:]
-                        elif param.startswith('DATA='):
-                            data = param[5:]
-                    
-                    if not cmd_counter:
-                        logger.error("Missing CMD parameter in SRSP")
-                        return b'ERROR Missing CMD parameter'
-                    
-                    if not data:
-                        logger.error("Missing DATA parameter in SRSP")
-                        return b'ERROR Missing DATA parameter'
-                    
-                    # Decrypt data if crypto key is available
-                    decrypted_data = None
-                    if conn.crypto_key:
-                        decrypted_data = conn.decrypt_data(data)
-                        if not decrypted_data:
-                            logger.error(f"Failed to decrypt SRSP data: {conn.last_error}")
-                            return f'ERROR Failed to decrypt data: {conn.last_error}'.encode('utf-8')
-                    else:
-                        decrypted_data = data
-                    
-                    # Process the response data
-                    logger.info(f"Received response for command {cmd_counter} from client {conn.client_id}")
-                    logger.debug(f"Response data: {decrypted_data}")
-                    
-                    return b'200 OK'
-                    
-                except Exception as e:
-                    logger.error(f"Error handling SRSP command: {e}", exc_info=True)
-                    return f'ERROR Failed to process response: {str(e)}'.encode('utf-8')
-                
+            # Dispatch to the appropriate command handler
+            if cmd == CMD_INIT:
+                return await self._handle_init(conn, parts)
+            elif cmd == CMD_ERRL:
+                return await self._handle_error(conn, parts)
+            elif cmd == CMD_PING:
+                return await self._handle_ping(conn)
+            elif cmd == CMD_INFO:
+                return await self._handle_info(conn, parts)
+            elif cmd == CMD_VERS:
+                return await self._handle_version(conn, parts)
+            elif cmd == CMD_DWNL:
+                return await self._handle_download(conn, parts)
+            elif cmd == CMD_GREQ:
+                return await self._handle_report_request(conn, parts)
+            elif cmd == CMD_SRSP:
+                return await self._handle_response(conn, parts)
             else:
                 logger.warning(f"Unknown command received: {cmd}")
                 return f'ERROR Unknown command: {cmd}'.encode('utf-8')
                 
         except Exception as e:
             logger.error(f"Unhandled error in handle_command: {e}", exc_info=True)
-            return f'ERROR Internal server error: {str(e)}'.encode('utf-8') 
+            return f'ERROR Internal server error: {str(e)}'.encode('utf-8')
+    
+    def _requires_authentication(self, cmd: str) -> bool:
+        """
+        Check if a command requires authentication.
+        
+        Args:
+            cmd: The command to check
+            
+        Returns:
+            True if the command requires authentication, False otherwise
+        """
+        authenticated_commands = [CMD_INFO, CMD_SRSP, CMD_GREQ, CMD_VERS, CMD_DWNL]
+        return cmd in authenticated_commands
+
+    async def _handle_init(self, conn: TCPConnection, parts: List[str]) -> bytes:
+        """
+        Handle an INIT command from a client.
+        
+        This method processes the initial connection setup, including key generation
+        and encryption negotiation.
+        
+        Args:
+            conn: The TCP connection that sent the command
+            parts: The parts of the command
+            
+        Returns:
+            The response bytes to send back to the client
+        """
+        # Parse INIT command parameters
+        params = self._parse_parameters(parts[1:])
+        logger.info(f"Parsed INIT parameters: {params}")
+        
+        # Validate required parameters
+        required_params = ['ID', 'DT', 'TM', 'HST']
+        for param in required_params:
+            if param not in params:
+                error_msg = f'ERROR Missing required parameter: {param}'
+                logger.error(f"INIT validation failed: {error_msg}")
+                return error_msg.encode('utf-8')
+        
+        # Validate key ID
+        try:
+            key_id = int(params['ID'])
+            if not 1 <= key_id <= 10:
+                error_msg = 'ERROR Invalid key ID. Must be between 1 and 10'
+                logger.error(f"INIT validation failed: {error_msg}")
+                return error_msg.encode('utf-8')
+        except ValueError:
+            error_msg = 'ERROR Invalid key ID format'
+            logger.error(f"INIT validation failed: {error_msg}")
+            return error_msg.encode('utf-8')
+        
+        # Store client info
+        conn.client_host = params['HST']
+        conn.app_type = params.get('ATP', 'UnknownApp')
+        conn.app_version = params.get('AVR', '1.0.0.0')
+        logger.info(f"Stored client info: host={conn.client_host}, type={conn.app_type}, version={conn.app_version}")
+        
+        # Generate and prepare server key
+        response_bytes, crypto_key = await self._prepare_init_response(conn, key_id)
+        
+        # Set crypto key and mark as authenticated
+        conn.crypto_key = crypto_key
+        conn.authenticated = True
+        
+        return response_bytes
+    
+    def _parse_parameters(self, param_parts: List[str]) -> Dict[str, str]:
+        """
+        Parse parameter parts into a dictionary.
+        
+        Args:
+            param_parts: Parameter parts from a command
+            
+        Returns:
+            Dictionary of parameter key-value pairs
+        """
+        params = {}
+        for param in param_parts:
+            if '=' in param:
+                key, value = param.split('=', 1)
+                params[key.upper()] = value
+        return params
+        
+    async def _prepare_init_response(self, conn: TCPConnection, key_id: int) -> Tuple[bytes, str]:
+        """
+        Prepare the response for an INIT command.
+        
+        This method generates the server key, constructs the crypto key,
+        and prepares the response to send back to the client.
+        
+        Args:
+            conn: The TCP connection
+            key_id: The key ID from the INIT command
+            
+        Returns:
+            A tuple of (response_bytes, crypto_key)
+        """
+        # Generate server key
+        if DEBUG_MODE:
+            server_key = DEBUG_SERVER_KEY
+        else:
+            server_key = ''.join(random.choices(string.ascii_letters + string.digits, k=KEY_LENGTH))
+        
+        # Store key info
+        key_len = len(server_key)
+        conn.server_key = server_key
+        conn.key_length = key_len
+        
+        # Get dictionary entry for key construction
+        dict_entry = CRYPTO_DICTIONARY[key_id - 1]
+        crypto_dict_part = dict_entry[:key_len]
+        
+        # Extract host parts for key generation
+        host_first_chars = conn.client_host[:2]  # First 2 chars
+        orig_host_last_char = conn.client_host[-1:]  # Last char
+        
+        # Log info about host parts
+        logger.info(f"Host parts: original='{host_first_chars + orig_host_last_char}', cleaned='{conn.client_host[:3]}'")
+        
+        # Test multiple key combinations for Delphi compatibility
+        crypto_key = await self._test_crypto_key_variants(conn, server_key, crypto_dict_part)
+        
+        # Format response for client
+        response_bytes = self._format_init_response(server_key, key_len)
+        
+        logger.info(f"Final normalized response: {response_bytes}")
+        logger.info(f"Using crypto key for client {conn.client_host}: {crypto_key}")
+        
+        return response_bytes, crypto_key
+    
+    async def _test_crypto_key_variants(self, conn: TCPConnection, server_key: str, crypto_dict_part: str) -> str:
+        """
+        Test multiple key combinations for compatibility with the client.
+        
+        Args:
+            conn: The TCP connection
+            server_key: The generated server key
+            crypto_dict_part: The dictionary part for the crypto key
+            
+        Returns:
+            The working crypto key
+        """
+        # Define key variants to test
+        key_variants = {
+            "оригинален с тире": server_key + crypto_dict_part + conn.client_host[:2] + conn.client_host[-1:],
+            "с първи 3 букви от хоста": server_key + crypto_dict_part + conn.client_host[:3],
+            "с първа буква от хоста": server_key + crypto_dict_part + conn.client_host[0],
+            "само частта от речника": server_key + crypto_dict_part,
+            "само сървърски ключ": server_key,
+        }
+        
+        # Test each key variant
+        working_key = None
+        working_key_name = None
+        
+        for variant_name, test_key in key_variants.items():
+            logger.info(f"Testing key variant '{variant_name}': {test_key}")
+            # Create a temporary connection with this key
+            temp_conn = TCPConnection(conn.reader, conn.writer)
+            temp_conn.crypto_key = test_key
+            
+            # Test encryption
+            if temp_conn.test_encryption():
+                logger.info(f"Key variant '{variant_name}' works: {test_key}")
+                working_key = test_key
+                working_key_name = variant_name
+                break
+        
+        # Use the working key or default to the original
+        if working_key:
+            logger.info(f"Using crypto key: {working_key} ({working_key_name})")
+        else:
+            # Construct crypto key (original method)
+            working_key = server_key + crypto_dict_part + conn.client_host[:2] + conn.client_host[-1:]
+            logger.info(f"Using default crypto key: {working_key} (no variants worked)")
+        
+        # Test encryption with the selected key
+        logger.info("Running thorough crypto key verification tests...")
+        conn.crypto_key = working_key
+        test_result = conn.test_encryption()
+        
+        if not test_result:
+            logger.error(f"Encryption test failed with key: {working_key}")
+            logger.error(f"Last error: {conn.last_error}")
+        else:
+            logger.info("All crypto validation tests passed successfully!")
+            
+        # Handle debug override if needed
+        if USE_FIXED_DEBUG_KEY:
+            debug_server_key = DEBUG_SERVER_KEY
+            dict_entry = CRYPTO_DICTIONARY[0]
+            crypto_dict_part = dict_entry[:len(debug_server_key)]
+            host_first_chars = conn.client_host[:2]
+            orig_host_last_char = conn.client_host[-1:]
+            
+            working_key = debug_server_key + crypto_dict_part + host_first_chars + orig_host_last_char
+            conn.crypto_key = working_key
+            
+            logger.info(f"DEBUG MODE: Using fixed crypto key: {working_key}")
+            
+            # Test that encryption works with this key
+            logger.info("DEBUG MODE: Testing encryption with fixed key...")
+            test_result = conn.test_encryption()
+            logger.info(f"DEBUG MODE: Encryption test result: {test_result}")
+        
+        return working_key
+        
+    def _format_init_response(self, server_key: str, key_len: int) -> bytes:
+        """
+        Format the response for an INIT command.
+        
+        Args:
+            server_key: The server key to include in the response
+            key_len: The length of the server key
+            
+        Returns:
+            The formatted response bytes
+        """
+        # Use the standard Delphi format with CRLF line endings
+        # Format 1 is the standard Delphi format that the client expects
+        response_format = RESPONSE_FORMATS['format1'].format(key_len, server_key)
+        response_bytes = response_format.encode('ascii')
+        
+        logger.info(f"INIT response: {response_bytes}")
+        logger.info(f"INIT response hex: {' '.join([f'{b:02x}' for b in response_bytes])}")
+        
+        return response_bytes
+
+    async def _handle_error(self, conn: TCPConnection, parts: List[str]) -> bytes:
+        """
+        Handle an error report from a client.
+        
+        Args:
+            conn: The TCP connection that sent the command
+            parts: The parts of the command
+            
+        Returns:
+            The response bytes to send back to the client
+        """
+        # Join all parts after the command name to get the error message
+        error_msg = ' '.join(parts[1:])
+        logger.error(f"Client error: {error_msg}")
+        
+        # Log detailed information about the error
+        if "Unable to initizlize communication" in error_msg:
+            logger.error("Analysis: Problem with INIT response format or incorrect crypto key")
+            logger.error(f"INIT parameters: ID={conn.client_id}, host={conn.client_host}")
+            logger.error(f"Server key: {conn.server_key}, length: {conn.key_length}")
+            logger.error(f"Crypto key: {conn.crypto_key}")
+            
+            # Create the proper format string for reference
+            proper_format = f"LEN={conn.key_length}\r\nKEY={conn.server_key}"
+            logger.error(f"Correct response format: '{proper_format}'")
+            
+            # Add more diagnostic information
+            if hasattr(conn, 'last_error') and conn.last_error:
+                logger.error(f"Last error: '{conn.last_error}'")
+            
+            # Log error parts for better analysis
+            logger.error(f"ERRL command full data: {' '.join(parts)}")
+            logger.error(f"ERRL command parts: {parts}")
+            for i, part in enumerate(parts[1:], 1):
+                logger.error(f"ERRL part {i}: '{part}'")
+            
+            logger.error("Анализ: Проблем с форматирането на INIT отговора или неправилен криптиращ ключ.")
+            logger.error(f"INIT параметри: ID={conn.client_id}, host={conn.client_host}")
+            logger.error(f"Изпратен ключ: {conn.server_key}, дължина: {conn.key_length}")
+            
+            # Communication analysis
+            logger.error(f"===== Last Client-Server Communication =====")
+            logger.error(f"Client ID from command: unknown")
+            logger.error(f"Delphi client would parse using: FTCPClient.LastCmdResult.Text.Values['LEN']")
+            logger.error(f"Delphi client would parse using: FTCPClient.LastCmdResult.Text.Values['KEY']")
+            logger.error(f"Expected client key creation: KEY + dict_part + hostname_chars")
+            logger.error(f"Fixed response format (for next attempt): 'LEN={conn.key_length}\r\nKEY={conn.server_key}'")
+            
+            # Host components analysis
+            logger.error("Компоненти на ключа:")
+            logger.error(f"  server_key: {conn.server_key}")
+            logger.error(f"  dict_part: {CRYPTO_DICTIONARY[0][:8]}")
+            logger.error("  host parts variance:")
+            logger.error(f"    first 2 chars: {conn.client_host[:2]}")
+            logger.error(f"    last char: {conn.client_host[-1:]}")
+            logger.error(f"    first 2 + last: {conn.client_host[:2] + conn.client_host[-1:]}")
+            
+            logger.error(f"Последен успешен тест на криптирането със сървърски ключ: {conn.crypto_key}")
+            test_result = conn.test_encryption()
+            logger.error(f"Тест на криптирането: {test_result}")
+        
+        return b'OK'
+
+    async def _handle_ping(self, conn: TCPConnection) -> bytes:
+        """
+        Handle a PING command from a client.
+        
+        Args:
+            conn: The TCP connection that sent the command
+            
+        Returns:
+            The response bytes to send back to the client
+        """
+        conn.last_ping = datetime.now()
+        return b'PONG'
+
+    async def _handle_info(self, conn: TCPConnection, parts: List[str]) -> bytes:
+        # Implementation of _handle_info method
+        pass
+
+    async def _handle_version(self, conn: TCPConnection, parts: List[str]) -> bytes:
+        # Implementation of _handle_version method
+        pass
+
+    async def _handle_download(self, conn: TCPConnection, parts: List[str]) -> bytes:
+        # Implementation of _handle_download method
+        pass
+
+    async def _handle_report_request(self, conn: TCPConnection, parts: List[str]) -> bytes:
+        # Implementation of _handle_report_request method
+        pass
+
+    async def _handle_response(self, conn: TCPConnection, parts: List[str]) -> bytes:
+        # Implementation of _handle_response method
+        pass 

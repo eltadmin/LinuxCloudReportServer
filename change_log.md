@@ -1,5 +1,45 @@
 ## Change Log for Linux Cloud Report Server
 
+### 2025-04-15 - Code Refactoring of tcp_server.py
+
+**Changes Made**:
+1. Improved code organization and structure
+   - Added proper docstrings to all classes and methods
+   - Added type hints for better code clarity
+   - Organized imports logically
+   - Added constants for configuration values
+   - Extracted command handling into separate methods
+
+2. Added better separation of concerns between classes
+   - TCPConnection class focuses solely on connection management
+   - Added new helper methods to make code more modular
+   - Extracted common functionality into separate methods
+
+3. Enhanced error handling and logging
+   - Added more detailed log messages
+   - Improved exception handling patterns
+   - Added context to error logs
+
+4. Improved the INIT command handling
+   - Refactored into smaller, more focused methods
+   - Better handling of crypto key testing
+   - Improved response formatting for Delphi client compatibility
+
+5. Improved connection cleanup
+   - Added dedicated method for connection cleanup
+   - Added proper task cancellation and resource cleanup
+   - Added more robust connection tracking
+
+**Files Modified**:
+- `server/tcp_server.py`: Major refactoring of the code
+
+**Benefits**:
+- More maintainable codebase
+- Better separation of concerns
+- Improved readability
+- More robust error handling
+- Easier to extend and modify in the future
+
 ### 2025-04-15 - Fix for INIT command response format
 
 **Issue**: Client can't initialize communication with server
