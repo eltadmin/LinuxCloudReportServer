@@ -438,14 +438,23 @@ class TCPServer:
                 # Format 1: LEN first with CRLF, но без trailing CRLF
                 format1 = f"LEN={debug_key_len}\r\nKEY={debug_server_key}"
                 
-                # Format 2: LEN first with LF only, но без trailing LF
+                # Format 2: LEN first with LF only, но без trailing LF - ТОЗИ ИЗГЛЕЖДА НАЙ-ДОБРЕ
                 format2 = f"LEN={debug_key_len}\nKEY={debug_server_key}"
                 
                 # Format 3: KEY first with CRLF, но без trailing CRLF
                 format3 = f"KEY={debug_server_key}\r\nLEN={debug_key_len}"
                 
-                # Choose which format to use - let's try format1 (LEN first with CRLF)
-                simple_format = format1
+                # Format 4: Exactly as suggested in the error logs
+                format4 = f"LEN={debug_key_len}\nKEY={debug_server_key}\n"
+                
+                # Format 5: Just the key - maybe simplest is best?
+                format5 = f"ABCDEFGH"
+                
+                # Format 6: Status line + suggested format
+                format6 = f"200 OK\nLEN={debug_key_len}\nKEY={debug_server_key}\n"
+                
+                # Choose which format to use - let's try format6 (with status line)
+                simple_format = format6
                 clean_response = simple_format.encode('ascii')
                 
                 logger.info(f"SIMPLIFIED RESPONSE: {clean_response}")
@@ -455,6 +464,9 @@ class TCPServer:
                 logger.info(f"Format 1 (LEN first, CRLF): {format1.encode('ascii')}")
                 logger.info(f"Format 2 (LEN first, LF): {format2.encode('ascii')}")
                 logger.info(f"Format 3 (KEY first, CRLF): {format3.encode('ascii')}")
+                logger.info(f"Format 4 (Suggested in logs): {format4.encode('ascii')}")
+                logger.info(f"Format 5 (Just key): {format5.encode('ascii')}")
+                logger.info(f"Format 6 (Status + Suggested): {format6.encode('ascii')}")
                 
                 # Override the crypto key for debugging
                 if USE_FIXED_DEBUG_KEY:
