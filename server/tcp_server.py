@@ -751,11 +751,12 @@ class TCPServer:
         Returns:
             Formatted response string
         """
-        # Windows server uses CR+LF line endings
+        # Windows client expects LEN followed by KEY with CRLF line endings
+        # This matches the format that the Delphi client parses with:
+        # FTCPClient.LastCmdResult.Text.Values['LEN'] and FTCPClient.LastCmdResult.Text.Values['KEY']
         response_parts = [
-            f"OK",
-            f"KEY={server_key}",
-            f"KL={key_length}"
+            f"LEN={key_length}",
+            f"KEY={server_key}"
         ]
         
         # Join with Windows-style CRLF line endings
