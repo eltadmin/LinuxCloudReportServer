@@ -584,58 +584,44 @@ class TCPServer:
         authenticated_commands = [CMD_INFO, CMD_SRSP, CMD_GREQ, CMD_VERS, CMD_DWNL]
         return cmd in authenticated_commands
 
-    async def _handle_init(self, conn: TCPConnection, parts: List[str]) -> bytes:
+    async def _handle_init(self, conn: TCPConnection, command_parts: List[str]) -> bool:
         """
-        Handle an INIT command from a client.
-        
-        This method processes the initial connection setup, including key generation
-        and encryption negotiation.
+        Handle the INIT command from the client.
         
         Args:
-            conn: The TCP connection that sent the command
-            parts: The parts of the command
+            conn: The TCP connection
+            command_parts: The parts of the command
             
         Returns:
-            The response bytes to send back to the client
+            True if the command was handled successfully
         """
-        # Parse INIT command parameters
-        params = self._parse_parameters(parts[1:])
-        logger.info(f"Parsed INIT parameters: {params}")
+        logger.info(f"Handling INIT command with parts: {command_parts}")
         
-        # Validate required parameters
-        required_params = ['ID', 'DT', 'TM', 'HST']
-        for param in required_params:
-            if param not in params:
-                error_msg = f'ERROR Missing required parameter: {param}'
-                logger.error(f"INIT validation failed: {error_msg}")
-                return error_msg.encode('utf-8')
-        
-        # Validate key ID
         try:
-            key_id = int(params['ID'])
-            if not 1 <= key_id <= 10:
-                error_msg = 'ERROR Invalid key ID. Must be between 1 and 10'
-                logger.error(f"INIT validation failed: {error_msg}")
-                return error_msg.encode('utf-8')
-        except ValueError:
-            error_msg = 'ERROR Invalid key ID format'
-            logger.error(f"INIT validation failed: {error_msg}")
-            return error_msg.encode('utf-8')
-        
-        # Store client info
-        conn.client_host = params['HST']
-        conn.app_type = params.get('ATP', 'UnknownApp')
-        conn.app_version = params.get('AVR', '1.0.0.0')
-        logger.info(f"Stored client info: host={conn.client_host}, type={conn.app_type}, version={conn.app_version}")
-        
-        # Generate and prepare server key
-        response_bytes, crypto_key = await self._prepare_init_response(conn, key_id)
-        
-        # Set crypto key and mark as authenticated
-        conn.crypto_key = crypto_key
-        conn.authenticated = True
-        
-        return response_bytes
+            # Parse parameters using helper method
+            params = self._parse_parameters(command_parts[1:] if len(command_parts) >= 2 else [])
+            logger.info(f"Extracted params: {params}")
+            
+            # Get the client IP and hostname
+            client_ip = params.get('IP', conn.client_address[0])
+            hostname = params.get('HOST', 'UNKNOWN')
+            dict_index = int(params.get('IDX', '0'))
+            
+            # Store the client hostname for key generation
+            conn.client_host = hostname
+            logger.info(f"Client hostname: {hostname}, Dictionary index: {dict_index}")
+            
+            # Prepare the response using the helper method
+            response_bytes, crypto_key = await self._prepare_init_response(conn, dict_index + 1)
+            
+            # Send the response
+            await self._send_response(conn, response_bytes.decode('latin1'))
+            logger.info("INIT command processed successfully")
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error handling INIT command: {e}", exc_info=True)
+            return False
     
     def _parse_parameters(self, param_parts: List[str]) -> Dict[str, str]:
         """
@@ -703,7 +689,7 @@ class TCPServer:
     
     async def _test_crypto_key_variants(self, conn: TCPConnection, server_key: str, crypto_dict_part: str) -> str:
         """
-        Test multiple key combinations for compatibility with the client.
+        Create the crypto key that matches the Windows server implementation.
         
         Args:
             conn: The TCP connection
@@ -715,7 +701,11 @@ class TCPServer:
         """
         try:
             # Construct crypto key using the method that matches Windows server
-            working_key = server_key + crypto_dict_part + conn.client_host[:2] + conn.client_host[-1:]
+            # Format: ServerKey + DictionaryPart + FirstTwoCharsOfHostname + LastCharOfHostname
+            host_first_chars = conn.client_host[:2]  # First 2 chars
+            host_last_char = conn.client_host[-1:]  # Last char
+            
+            working_key = server_key + crypto_dict_part + host_first_chars + host_last_char
             logger.info(f"Using crypto key: {working_key}")
             
             # Set the crypto key and test encryption
@@ -728,58 +718,36 @@ class TCPServer:
             else:
                 logger.info("Crypto validation test passed successfully")
             
-            # Handle debug override if needed
-            if USE_FIXED_DEBUG_KEY:
-                debug_server_key = DEBUG_SERVER_KEY
-                dict_entry = CRYPTO_DICTIONARY[0]
-                crypto_dict_part = dict_entry[:len(debug_server_key)]
-                host_first_chars = conn.client_host[:2]
-                orig_host_last_char = conn.client_host[-1:]
-                
-                working_key = debug_server_key + crypto_dict_part + host_first_chars + orig_host_last_char
-                conn.crypto_key = working_key
-                
-                logger.info(f"DEBUG MODE: Using fixed crypto key: {working_key}")
-                
-                # Test that encryption works with this key
-                logger.info("DEBUG MODE: Testing encryption with fixed key...")
-                test_result = conn.test_encryption()
-                logger.info(f"DEBUG MODE: Encryption test result: {test_result}")
-            
+            # Do not override with debug key - use the actual key that works
             return working_key
         except Exception as e:
-            logger.error(f"Error testing crypto key variants: {e}", exc_info=True)
+            logger.error(f"Error creating crypto key: {e}", exc_info=True)
             # Fall back to the original key construction method
             working_key = server_key + crypto_dict_part + conn.client_host[:2] + conn.client_host[-1:]
             conn.crypto_key = working_key
             return working_key
         
-    def _format_init_response(self, server_key: str, key_len: int) -> bytes:
+    def _format_init_response(self, server_key: str, key_length: int) -> str:
         """
-        Format the response for an INIT command.
+        Format the INIT response to send back to the client.
         
         Args:
             server_key: The server key to include in the response
-            key_len: The length of the server key
+            key_length: The length of the key
             
         Returns:
-            The formatted response bytes
+            Formatted response string
         """
-        # Based on the README, the format should be LEN first, then KEY, with proper CRLF line endings
-        # This is critical for Delphi's TStringList.Values[] to parse correctly
-        response = f"LEN={key_len}\r\nKEY={server_key}\r\n"
+        # Windows server uses CR+LF line endings
+        response_parts = [
+            f"OK",
+            f"KEY={server_key}",
+            f"KL={key_length}"
+        ]
         
-        # Log the complete response as it would be displayed/processed
-        logger.info(f"INIT response formatted string: {repr(response)}")
+        # Join with Windows-style CRLF line endings
+        return "\r\n".join(response_parts)
         
-        # Convert the response to bytes for sending
-        response_bytes = response.encode('ascii')
-        
-        # Log the actual bytes being sent for debugging
-        logger.info(f"INIT response bytes (hex): {response_bytes.hex()}")
-        
-        return response_bytes
-
     async def _handle_error(self, conn: TCPConnection, parts: List[str]) -> bytes:
         """
         Handle an error report from a client.
@@ -874,4 +842,41 @@ class TCPServer:
 
     async def _handle_response(self, conn: TCPConnection, parts: List[str]) -> bytes:
         # Implementation of _handle_response method
-        pass 
+        pass
+
+    def _generate_server_key(self) -> str:
+        """
+        Generate a random server key for the encryption.
+        
+        Returns:
+            A random string of length KEY_LENGTH for use as the server key
+        """
+        if DEBUG_MODE and USE_FIXED_DEBUG_KEY:
+            logger.warning("Using debug server key! NOT SECURE FOR PRODUCTION!")
+            return DEBUG_SERVER_KEY
+            
+        # Generate a random server key with KEY_LENGTH characters
+        chars = string.ascii_uppercase + string.digits
+        return ''.join(random.choice(chars) for _ in range(KEY_LENGTH))
+
+    async def _send_response(self, conn: TCPConnection, response: str) -> None:
+        """
+        Send a response to the client.
+        
+        Args:
+            conn: The TCP connection
+            response: The response string to send
+        """
+        try:
+            # Ensure we have proper line endings and encode to bytes
+            if not response.endswith("\r\n"):
+                response += "\r\n"
+                
+            # Encode and send
+            response_bytes = response.encode('latin1')
+            conn.writer.write(response_bytes)
+            await conn.writer.drain()
+            logger.debug(f"Sent response: {response.strip()}")
+        except Exception as e:
+            logger.error(f"Error sending response: {e}", exc_info=True)
+            raise 
