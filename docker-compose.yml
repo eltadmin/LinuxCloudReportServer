@@ -10,6 +10,7 @@ services:
     environment:
       - TCP_HOST=0.0.0.0
       - TCP_PORT=8016
+      - SERVER_DEBUG=true  # Added for debugging
     depends_on:
       db:
         condition: service_healthy
