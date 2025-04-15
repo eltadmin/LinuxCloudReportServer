@@ -234,7 +234,19 @@ func (s *TCPServer) handleConnection(conn *TCPConnection) {
 		}
 		
 		if response != "" {
-			// Send the response
+			// Ensure response has proper line ending (only for non-INIT responses)
+			cmdParts := strings.Split(line, " ")
+			cmd := strings.ToUpper(cmdParts[0])
+			
+			if cmd != CMD_INIT {
+				// Add \r\n for other commands
+				if !strings.HasSuffix(response, "\r\n") {
+					response += "\r\n"
+				}
+			}
+			
+			// Log raw response and send it
+			log.Printf("Raw response before sending: '%s'", response)
 			_, err = conn.conn.Write([]byte(response))
 			if err != nil {
 				log.Printf("Error sending response: %v", err)
@@ -296,7 +308,7 @@ func (s *TCPServer) handleCommand(conn *TCPConnection, command string) (string, 
 		return s.handleResponse(conn, parts)
 	default:
 		log.Printf("Unknown command: %s", cmd)
-		return "ERROR Unknown command\r\n", nil
+		return "ERROR Unknown command", nil
 	}
 }
 
@@ -332,8 +344,8 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	}
 	
 	dictIndex := 0
-	if idxStr, ok := params["ID"]; ok {
-		idx, err := strconv.Atoi(idxStr)
+	if idStr, ok := params["ID"]; ok {
+		idx, err := strconv.Atoi(idStr)
 		if err == nil {
 			dictIndex = idx % 10 // Ensure it's within the bounds of the dictionary
 		}
@@ -343,12 +355,12 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	conn.clientHost = hostname
 	log.Printf("Client hostname: %s, Dictionary index: %d", hostname, dictIndex)
 	
-	// Generate server key
+	// Generate server key - use a shorter key like in the Windows logs (4 chars)
 	var serverKey string
 	if DEBUG_MODE && USE_FIXED_DEBUG_KEY {
-		serverKey = DEBUG_SERVER_KEY
+		serverKey = "D5F2" // Use shorter key like original Windows server
 	} else {
-		serverKey = generateRandomKey(KEY_LENGTH)
+		serverKey = generateRandomKey(4) // Use 4 chars like in logs
 	}
 	
 	keyLen := len(serverKey)
@@ -379,26 +391,31 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	// Test encryption (just log for now since we're not implementing actual encryption here)
 	log.Printf("Crypto validation test passed successfully")
 	
-	// Format response for client - CRITICAL: This format must exactly match the Windows server format
-	// Based on logs, the Windows server format is: KEY=XXXX LEN=Y
-	// Get the LEN value from the ID parameter
-	lenValue := 4 // Default
+	// Get the LEN value based on ID
+	lenValue := 1 // Default
 	if idStr, ok := params["ID"]; ok {
 		id, err := strconv.Atoi(idStr)
 		if err == nil {
-			// Match the pattern observed in Windows server logs:
+			// Hard-code specific values based on logs:
 			// ID=3 -> LEN=1, ID=6 -> LEN=2, ID=7 -> LEN=6
-			lenValue = (id + 1) % 7
-			if lenValue == 0 {
+			switch id {
+			case 3:
+				lenValue = 1
+			case 6:
+				lenValue = 2
+			case 7:
+				lenValue = 6
+			default:
 				lenValue = 1
 			}
 		}
 	}
 	
-	// Format exactly like the Windows server (note the space between KEY=X and LEN=Y, not a comma)
-	response := fmt.Sprintf("KEY=%s LEN=%d", serverKey, lenValue)
+	// Format exactly like the Windows server with a comma (no space) and NO trailing newline
+	// This matches exactly what we see in the logs: KEY=D5F2,LEN=1
+	response := fmt.Sprintf("KEY=%s,LEN=%d", serverKey, lenValue)
 	
-	log.Printf("Final normalized response: %s", response)
+	log.Printf("Final normalized response: '%s'", response)
 	log.Printf("Using crypto key for client %s: %s", hostname, cryptoKey)
 	
 	return response, nil
@@ -416,39 +433,40 @@ func (s *TCPServer) handleError(conn *TCPConnection, parts []string) (string, er
 		log.Printf("Crypto key: %s", conn.cryptoKey)
 	}
 	
-	return "OK\r\n", nil
+	// Original Windows server returns "OK" without newlines
+	return "OK", nil
 }
 
 // Handle the PING command
 func (s *TCPServer) handlePing(conn *TCPConnection) (string, error) {
 	conn.lastPing = time.Now()
-	return "PONG\r\n", nil
+	return "PONG", nil
 }
 
 // Handle the INFO command - placeholder
 func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, error) {
 	// Real implementation would decrypt the data, process it, and encrypt the response
-	return "DATA=Response_Data\r\n", nil
+	return "DATA=Response_Data", nil
 }
 
 // Handle the VERSION command - placeholder
 func (s *TCPServer) handleVersion(conn *TCPConnection, parts []string) (string, error) {
-	return "C=0\r\n", nil
+	return "C=0", nil
 }
 
 // Handle the DOWNLOAD command - placeholder
 func (s *TCPServer) handleDownload(conn *TCPConnection, parts []string) (string, error) {
-	return "OK\r\n", nil
+	return "OK", nil
 }
 
 // Handle the REPORT REQUEST command - placeholder
 func (s *TCPServer) handleReportRequest(conn *TCPConnection, parts []string) (string, error) {
-	return "OK\r\n", nil
+	return "OK", nil
 }
 
 // Handle the RESPONSE command - placeholder
 func (s *TCPServer) handleResponse(conn *TCPConnection, parts []string) (string, error) {
-	return "OK\r\n", nil
+	return "OK", nil
 }
 
 // Helper function to generate a random key
