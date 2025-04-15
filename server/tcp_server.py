@@ -830,6 +830,32 @@ class TCPServer:
             response = f"KEY={server_key},LEN={key_len}"
             # The response does not include \r\n at the end
             # The Windows server is returning exactly this format
+        elif format_type == 12:
+            # Special Delphi TStringList format
+            # Delphi's TStringList with Values['KEY'] expects "KEY=value" on separate lines
+            # Note: This format specifically targets Delphi's Values property expectations
+            response = f"KEY={server_key}\r\nLEN={key_len}\r\n"
+            logger.info(f"Using Delphi TStringList-compatible format: {response!r}")
+        elif format_type == 13:
+            # Hybrid format that should work with most Delphi clients
+            # Format identical to how Delphi's StringList.Values[] works
+            # This ensures the client can parse with LastCmdResult.Text.Values['KEY']
+            response = f"KEY={server_key}"
+            response = response.ljust(40) # Pad to fixed width for extra compatibility
+            response += f"\r\nLEN={key_len}\r\n"
+            logger.info(f"Using hybrid Delphi format: {response!r}")
+        elif format_type == 14:
+            # Precise Delphi TStringList format that matches how Delphi TStringList.Values works
+            # For Delphi's LastCmdResult.Text.Values['KEY'] to work correctly:
+            # 1. Each line must end with \r\n
+            # 2. Each name=value pair must be on its own line
+            # 3. No extra spaces around the = sign
+            # 4. No extra blank lines
+            response_lines = []
+            response_lines.append(f"KEY={server_key}")
+            response_lines.append(f"LEN={key_len}")
+            response = "\r\n".join(response_lines) + "\r\n"
+            logger.info(f"Using precise Delphi TStringList format: {response!r}")
         else:
             # Default to original format
             response = f"KEY={server_key},LEN={key_len}"
