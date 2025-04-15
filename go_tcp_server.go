@@ -444,9 +444,9 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	cryptoKey := serverKey + cryptoDictPart + hostFirstChars + hostLastChar
 	conn.cryptoKey = cryptoKey
 	
-	// ВАЖНО: TStrings.Values изисква KEY=VALUE разделени с \r\n
-	// Delphi клиентът използва точно FTCPClient.LastCmdResult.Text.Values['KEY'] за четене
-	response := fmt.Sprintf("KEY=%s\r\nLEN=%d", serverKey, lenValue)
+	// Используем формат, максимально приближенный к тому, как это работает в Indy
+	// В Indy ответ обычно заканчивается дополнительным \r\n
+	response := fmt.Sprintf("LEN=%d\r\nKEY=%s\r\n", lenValue, serverKey)
 	
 	// DEBUG PRINT DETAILED INFORMATION
 	log.Printf("=========== INIT RESPONSE DETAILS ===========")
