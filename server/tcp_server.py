@@ -751,10 +751,18 @@ class TCPServer:
         Returns:
             Formatted response string
         """
-        # Create a response matching TIdReply format in Delphi
-        # Based on the client code, FTCPClient.LastCmdResult.Text.Values['LEN'] and ['KEY'] will parse this
-        # The 200 code at the beginning is essential for TIdReply 
-        response = f"200\r\nLEN={key_length}\r\nKEY={server_key}\r\n"
+        # According to Delphi TIdCmdTCPClient, the format for SendCmd responses is:
+        # numeric_code[space][response_text]\r\n
+        # Then any additional lines of text for multi-line responses
+        
+        # Using exactly "200" as the numeric code without text, since FTCPClient.SendCmd() checks this
+        response = "200\r\n"
+        # Adding a blank line after the status code to separate headers
+        response += "\r\n"
+        # Then the key-value pairs that will be parsed with FTCPClient.LastCmdResult.Text.Values
+        response += f"LEN={key_length}\r\n"
+        response += f"KEY={server_key}\r\n"
+        
         return response
         
     async def _handle_error(self, conn: TCPConnection, parts: List[str]) -> bytes:
