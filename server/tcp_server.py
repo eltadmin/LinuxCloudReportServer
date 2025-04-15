@@ -7,7 +7,7 @@ and commands with encryption.
 
 import asyncio
 import logging
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Optional, List, Tuple, Union
 import json
 import zlib
 from datetime import datetime, timedelta
@@ -390,7 +390,11 @@ class TCPServer:
                 
                 # Send response if any
                 if response:
-                    await self._send_response(conn, response)
+                    try:
+                        await self._send_response(conn, response)
+                    except Exception as e:
+                        logger.error(f"Failed to send response: {e}")
+                        break
                     
         except asyncio.CancelledError:
             logger.info(f"Connection handling for {peer} was cancelled")
@@ -423,34 +427,42 @@ class TCPServer:
             logger.error(f"Error reading from socket: {e}")
             return None
     
-    async def _send_response(self, conn: TCPConnection, response: bytes) -> bool:
+    async def _send_response(self, conn: TCPConnection, response: Union[str, bytes]) -> None:
         """
         Send a response to the client.
         
         Args:
-            conn: The TCP connection to send to
-            response: The response data to send
-            
-        Returns:
-            True if the response was sent successfully, False otherwise
+            conn: The TCP connection
+            response: The response to send (either string or bytes)
         """
         try:
-            # Log response for debugging
-            if isinstance(response, bytes):
-                log_response = response[:100]  # First 100 bytes for logging
-                try:
-                    log_text = log_response.decode('ascii', errors='replace')
-                    logger.debug(f"Response first 100 bytes: {log_text}")
-                except:
-                    logger.debug(f"Response (binary): {len(response)} bytes")
-            
-            # Send response
-            conn.writer.write(response)
+            # Convert string to bytes if necessary
+            if isinstance(response, str):
+                # Ensure we have proper line endings for string responses
+                if not response.endswith("\r\n"):
+                    response += "\r\n"
+                response_bytes = response.encode('latin1')
+            else:
+                # For bytes, add CRLF if needed
+                response_bytes = response
+                if not response_bytes.endswith(b'\r\n'):
+                    response_bytes += b'\r\n'
+                
+            # Write and drain
+            conn.writer.write(response_bytes)
             await conn.writer.drain()
-            return True
+            
+            # Log the response (truncate if too long)
+            log_response = response_bytes[:100]  # First 100 bytes for logging
+            try:
+                log_text = log_response.decode('latin1', errors='replace')
+                logger.debug(f"Sent response: {log_text.strip()}")
+            except Exception:
+                logger.debug(f"Sent binary response: {len(response_bytes)} bytes")
+                
         except Exception as e:
-            logger.error(f"Error sending response to {conn.peer}: {e}", exc_info=True)
-            return False
+            logger.error(f"Error sending response: {e}", exc_info=True)
+            raise
     
     async def _cleanup_connection(self, conn: TCPConnection):
         """
@@ -584,7 +596,7 @@ class TCPServer:
         authenticated_commands = [CMD_INFO, CMD_SRSP, CMD_GREQ, CMD_VERS, CMD_DWNL]
         return cmd in authenticated_commands
 
-    async def _handle_init(self, conn: TCPConnection, command_parts: List[str]) -> bool:
+    async def _handle_init(self, conn: TCPConnection, command_parts: List[str]) -> bytes:
         """
         Handle the INIT command from the client.
         
@@ -593,7 +605,7 @@ class TCPServer:
             command_parts: The parts of the command
             
         Returns:
-            True if the command was handled successfully
+            The response bytes to send back to the client
         """
         logger.info(f"Handling INIT command with parts: {command_parts}")
         
@@ -602,9 +614,9 @@ class TCPServer:
             params = self._parse_parameters(command_parts[1:] if len(command_parts) >= 2 else [])
             logger.info(f"Extracted params: {params}")
             
-            # Get the client IP and hostname
-            client_ip = params.get('IP', conn.client_address[0])
-            hostname = params.get('HOST', 'UNKNOWN')
+            # Get the client IP and hostname from the connection peer info instead of client_address
+            client_ip = params.get('IP', conn.peer[0] if conn.peer else 'unknown')
+            hostname = params.get('HOST', params.get('HST', 'UNKNOWN'))
             dict_index = int(params.get('IDX', '0'))
             
             # Store the client hostname for key generation
@@ -614,14 +626,13 @@ class TCPServer:
             # Prepare the response using the helper method
             response_bytes, crypto_key = await self._prepare_init_response(conn, dict_index + 1)
             
-            # Send the response
-            await self._send_response(conn, response_bytes.decode('latin1'))
-            logger.info("INIT command processed successfully")
+            # Return the response bytes directly
+            return response_bytes
             
-            return True
         except Exception as e:
             logger.error(f"Error handling INIT command: {e}", exc_info=True)
-            return False
+            # Return a bytes response on error
+            return b'ERROR Internal server error'
     
     def _parse_parameters(self, param_parts: List[str]) -> Dict[str, str]:
         """
@@ -680,9 +691,11 @@ class TCPServer:
         crypto_key = await self._test_crypto_key_variants(conn, server_key, crypto_dict_part)
         
         # Format response for client
-        response_bytes = self._format_init_response(server_key, key_len)
+        response_str = self._format_init_response(server_key, key_len)
+        # Convert to bytes
+        response_bytes = response_str.encode('latin1')
         
-        logger.info(f"Final normalized response: {response_bytes}")
+        logger.info(f"Final normalized response: {response_str}")
         logger.info(f"Using crypto key for client {conn.client_host}: {crypto_key}")
         
         return response_bytes, crypto_key
@@ -796,18 +809,26 @@ class TCPServer:
         logger.error(f"Expected client key creation: KEY + dict_part + hostname_chars")
         logger.error(f"Fixed response format (for next attempt): 'LEN={conn.key_length}\r\nKEY={conn.server_key}'")
         
-        # Host components analysis
+        # Host components analysis - safely handle None values
         logger.error("Компоненти на ключа:")
         logger.error(f"  server_key: {conn.server_key}")
         logger.error(f"  dict_part: {CRYPTO_DICTIONARY[0][:8]}")
         logger.error("  host parts variance:")
-        logger.error(f"    first 2 chars: {conn.client_host[:2]}")
-        logger.error(f"    last char: {conn.client_host[-1:]}")
-        logger.error(f"    first 2 + last: {conn.client_host[:2] + conn.client_host[-1:]}")
+        
+        # Safely access host parts if client_host exists
+        if conn.client_host:
+            logger.error(f"    first 2 chars: {conn.client_host[:2]}")
+            logger.error(f"    last char: {conn.client_host[-1:]}")
+            logger.error(f"    first 2 + last: {conn.client_host[:2] + conn.client_host[-1:]}")
+        else:
+            logger.error("    client_host is None - cannot extract host parts")
         
         logger.error(f"Последен успешен тест на криптирането със сървърски ключ: {conn.crypto_key}")
-        test_result = conn.test_encryption()
-        logger.error(f"Тест на криптирането: {test_result}")
+        if conn.crypto_key:
+            test_result = conn.test_encryption()
+            logger.error(f"Тест на криптирането: {test_result}")
+        else:
+            logger.error("Тест на криптирането: невъзможен (липсва ключ)")
         
         return b'OK'
         
@@ -857,26 +878,4 @@ class TCPServer:
             
         # Generate a random server key with KEY_LENGTH characters
         chars = string.ascii_uppercase + string.digits
-        return ''.join(random.choice(chars) for _ in range(KEY_LENGTH))
-
-    async def _send_response(self, conn: TCPConnection, response: str) -> None:
-        """
-        Send a response to the client.
-        
-        Args:
-            conn: The TCP connection
-            response: The response string to send
-        """
-        try:
-            # Ensure we have proper line endings and encode to bytes
-            if not response.endswith("\r\n"):
-                response += "\r\n"
-                
-            # Encode and send
-            response_bytes = response.encode('latin1')
-            conn.writer.write(response_bytes)
-            await conn.writer.drain()
-            logger.debug(f"Sent response: {response.strip()}")
-        except Exception as e:
-            logger.error(f"Error sending response: {e}", exc_info=True)
-            raise 
+        return ''.join(random.choice(chars) for _ in range(KEY_LENGTH)) 
