@@ -435,26 +435,27 @@ class TCPServer:
                 debug_server_key = "ABCDEFGH"  # Exactly 8 characters length
                 debug_key_len = len(debug_server_key)
                 
-                # Format 1: LEN first with CRLF, но без trailing CRLF
+                # Format 1: LEN first with CRLF, no trailing CRLF - This is what the Delphi client expects
                 format1 = f"LEN={debug_key_len}\r\nKEY={debug_server_key}"
                 
-                # Format 2: LEN first with LF only, но без trailing LF - ТОЗИ ИЗГЛЕЖДА НАЙ-ДОБРЕ
+                # Format 2: LEN first with LF only, no trailing LF
                 format2 = f"LEN={debug_key_len}\nKEY={debug_server_key}"
                 
-                # Format 3: KEY first with CRLF, но без trailing CRLF
+                # Format 3: KEY first with CRLF, no trailing CRLF
                 format3 = f"KEY={debug_server_key}\r\nLEN={debug_key_len}"
                 
                 # Format 4: Exactly as suggested in the error logs
                 format4 = f"LEN={debug_key_len}\nKEY={debug_server_key}\n"
                 
-                # Format 5: Just the key - maybe simplest is best?
-                format5 = f"ABCDEFGH"
+                # Format 5: Just the key
+                format5 = f"{debug_server_key}"
                 
                 # Format 6: Status line + suggested format
                 format6 = f"200 OK\nLEN={debug_key_len}\nKEY={debug_server_key}\n"
                 
-                # Choose which format to use - let's try format6 (with status line)
-                simple_format = format6
+                # Choose which format to use - USING FORMAT 1 (standard Delphi format with CRLF)
+                # Based on client code analysis, this is what the client expects
+                simple_format = format1
                 clean_response = simple_format.encode('ascii')
                 
                 logger.info(f"SIMPLIFIED RESPONSE: {clean_response}")
@@ -508,11 +509,13 @@ class TCPServer:
                     logger.error(f"INIT parameters: ID={conn.client_id}, host={conn.client_host}")
                     logger.error(f"Server key: {conn.server_key}, length: {conn.key_length}")
                     logger.error(f"Crypto key: {conn.crypto_key}")
-                    logger.error("Try different response format: LEN={len}\r\nKEY={key}\r\n")
+                    # Create the proper format string for reference
+                    proper_format = f"LEN={conn.key_length}\r\nKEY={conn.server_key}"
+                    logger.error(f"Correct response format: '{proper_format}'")
                     
                     # Add more diagnostic information
                     if hasattr(conn, 'last_error') and conn.last_error:
-                        logger.error(f"Последният неработещ ключ: '{conn.crypto_key}'")
+                        logger.error(f"Last error: '{conn.last_error}'")
                     
                     # Log error parts for better analysis
                     logger.error(f"ERRL command full data: {command}")
@@ -524,12 +527,14 @@ class TCPServer:
                     logger.error("Анализ: Проблем с форматирането на INIT отговора или неправилен криптиращ ключ.")
                     logger.error(f"INIT параметри: ID={conn.client_id}, host={conn.client_host}")
                     logger.error(f"Изпратен ключ: {conn.server_key}, дължина: {conn.key_length}")
+                    
+                    # Communication analysis
                     logger.error(f"===== Last Client-Server Communication =====")
                     logger.error(f"Client ID from command: unknown")
-                    logger.error(f"Suggested corrected response format: 'LEN={conn.key_length}\nKEY={conn.server_key}\n'")
-                    logger.error(f"Последен успешен тест на криптирането със сървърски ключ: {conn.crypto_key}")
-                    test_result = conn.test_encryption()
-                    logger.error(f"Тест на криптирането: {test_result}")
+                    logger.error(f"Delphi client would parse using: FTCPClient.LastCmdResult.Text.Values['LEN']")
+                    logger.error(f"Delphi client would parse using: FTCPClient.LastCmdResult.Text.Values['KEY']")
+                    logger.error(f"Expected client key creation: KEY + dict_part + hostname_chars")
+                    logger.error(f"Fixed response format (for next attempt): 'LEN={conn.key_length}\r\nKEY={conn.server_key}'")
                     
                     # Host components analysis
                     logger.error("Компоненти на ключа:")
@@ -539,12 +544,10 @@ class TCPServer:
                     logger.error(f"    first 2 chars: {conn.client_host[:2]}")
                     logger.error(f"    last char: {conn.client_host[-1:]}")
                     logger.error(f"    first 2 + last: {conn.client_host[:2] + conn.client_host[-1:]}")
-                    logger.error(f"    first 3 chars: {conn.client_host[:3]}")
-                    logger.error(f"    first char: {conn.client_host[0]}")
                     
-                    # Analyze host chars
-                    host_chars = " ".join([f"{c}({ord(c)})" for c in conn.client_host])
-                    logger.error(f"  host chars: {host_chars}")
+                    logger.error(f"Последен успешен тест на криптирането със сървърски ключ: {conn.crypto_key}")
+                    test_result = conn.test_encryption()
+                    logger.error(f"Тест на криптирането: {test_result}")
                 
                 return b'OK'
                 
