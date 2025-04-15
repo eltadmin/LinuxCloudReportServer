@@ -242,11 +242,11 @@ func (s *TCPServer) handleConnection(conn *TCPConnection) {
 		}
 		
 		if response != "" {
-			// For INIT command, send exact byte-for-byte response with NO newline characters
+			// For INIT command, send exact byte-for-byte response with CRLF
 			if cmd == CMD_INIT {
 				log.Printf("====== SENDING INIT RESPONSE ======")
 				
-				// Response is already properly formatted with CRLF, don't add null byte
+				// Delphi не добавя NULL байт - просто използва TIdReply.Text.Values
 				responseBytes := []byte(response)
 				
 				log.Printf("Raw response: '%s'", response)
@@ -444,8 +444,9 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	cryptoKey := serverKey + cryptoDictPart + hostFirstChars + hostLastChar
 	conn.cryptoKey = cryptoKey
 	
-	// EXACT RESPONSE FORMAT - Change to CRLF format instead of comma
-	response := fmt.Sprintf("LEN=%d\r\nKEY=%s", lenValue, serverKey)
+	// EXACT RESPONSE FORMAT - точно като в оригиналния Delphi код
+	// В Delphi използва ASender.Reply.Text.Values, което създава редове с формат KEY=value
+	response := fmt.Sprintf("KEY=%s\r\nLEN=%d", serverKey, lenValue)
 	
 	// DEBUG PRINT DETAILED INFORMATION
 	log.Printf("=========== INIT RESPONSE DETAILS ===========")
