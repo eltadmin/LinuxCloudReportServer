@@ -789,10 +789,9 @@ class TCPServer:
             Formatted response string
         """
         # Format to match the Windows server's response exactly
-        # KEY=server_key,LEN=key_length (without any line endings)
-        response = f"KEY={server_key},LEN={key_length}"
-        
-        return response
+        # For Delphi TStrings.Values compatibility, this needs to be exactly in the KEY=value\r\nLEN=value format
+        # No trailing \r\n as that's not part of the parsed content
+        return f"KEY={server_key}\r\nLEN={key_length}"
         
     async def _handle_error(self, conn: TCPConnection, parts: List[str]) -> bytes:
         """
@@ -937,3 +936,49 @@ class TCPServer:
         except Exception as e:
             logging.error(f"Error starting TCP server: {e}")
             raise 
+
+    def handle_client(self, client_sock, addr):
+        """Handle client connection."""
+        client_ip = addr[0]
+        self.logger.info(f"Connection from {client_ip}")
+        client_sock.settimeout(self.timeout)
+
+        try:
+            while True:
+                data = client_sock.recv(4096)
+                if not data:
+                    self.logger.debug("Client closed connection")
+                    break
+
+                received_text = data.decode('utf-8').strip()
+                self.logger.debug(f"Received: {received_text}")
+
+                # Handle the command
+                response = self._handle_command(received_text, client_ip)
+                if response:
+                    # Ensure response ends with \r\n for Delphi client compatibility
+                    if not response.endswith('\r\n'):
+                        response += '\r\n'
+                    
+                    response_bytes = response.encode('utf-8')
+                    self.logger.debug(f"Response (text): {response!r}")
+                    self.logger.debug(f"Response (bytes): {' '.join([f'{b:02x}' for b in response_bytes])}")
+                    client_sock.sendall(response_bytes)
+                
+                # Close connection if the command was EXIT
+                if received_text.startswith("EXIT"):
+                    self.logger.info("Client requested EXIT, closing connection")
+                    break
+
+        except socket.timeout:
+            self.logger.warning(f"Connection timed out for {client_ip}")
+        except ConnectionResetError:
+            self.logger.warning(f"Connection reset by {client_ip}")
+        except Exception as e:
+            self.logger.error(f"Error handling client {client_ip}: {e}")
+        finally:
+            try:
+                client_sock.close()
+            except:
+                pass
+            self.logger.info(f"Connection closed for {client_ip}") 
