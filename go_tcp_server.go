@@ -246,8 +246,8 @@ func (s *TCPServer) handleConnection(conn *TCPConnection) {
 			if cmd == CMD_INIT {
 				log.Printf("====== SENDING INIT RESPONSE ======")
 				
-				// Add terminating null byte (0x00) for Delphi compatibility
-				responseBytes := append([]byte(response), 0)
+				// Response is already properly formatted with CRLF, don't add null byte
+				responseBytes := []byte(response)
 				
 				log.Printf("Raw response: '%s'", response)
 				log.Printf("Response bytes (hex): % x", responseBytes)
@@ -444,8 +444,8 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	cryptoKey := serverKey + cryptoDictPart + hostFirstChars + hostLastChar
 	conn.cryptoKey = cryptoKey
 	
-	// EXACT RESPONSE FORMAT
-	response := fmt.Sprintf("KEY=%s,LEN=%d", serverKey, lenValue)
+	// EXACT RESPONSE FORMAT - Change to CRLF format instead of comma
+	response := fmt.Sprintf("LEN=%d\r\nKEY=%s", lenValue, serverKey)
 	
 	// DEBUG PRINT DETAILED INFORMATION
 	log.Printf("=========== INIT RESPONSE DETAILS ===========")
