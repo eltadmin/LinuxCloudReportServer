@@ -424,10 +424,11 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	// Вземи елемента от речника (коригирай индекса за Go, който индексира от 0)
 	dictEntry := CRYPTO_DICTIONARY[dictIndex-1]
 	
-	// Вземи само първите N символа, където N е дължината на ключа
+	// ПОПРАВКА: Вземи само първите N символа от речника, но използваме KEY_LENGTH (4), а не lenValue
+	// lenValue е за брой символи от ключа, но в случая използваме целия ключ и първите 4 символа от речника
 	cryptoDictPart := dictEntry
-	if len(dictEntry) > lenValue {
-		cryptoDictPart = dictEntry[:lenValue]
+	if len(dictEntry) > KEY_LENGTH {
+		cryptoDictPart = dictEntry[:KEY_LENGTH]
 	}
 	
 	// Extract host parts for key generation
@@ -444,8 +445,8 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	cryptoKey := serverKey + cryptoDictPart + hostFirstChars + hostLastChar
 	conn.cryptoKey = cryptoKey
 	
-	// НОВИЯТ ФОРМАТ: само един CRLF, без CRLF в края
-	response := fmt.Sprintf("KEY=%s\r\nLEN=%d", serverKey, lenValue)
+	// ОПРОСТЕН ФОРМАТ: ключовете са разделени със запетая без CRLF
+	response := fmt.Sprintf("KEY=%s,LEN=%d", serverKey, lenValue)
 	
 	// DEBUG PRINT DETAILED INFORMATION
 	log.Printf("=========== INIT RESPONSE DETAILS ===========")
