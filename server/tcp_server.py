@@ -21,6 +21,7 @@ import base64
 import re
 import socket
 import os
+import struct
 
 logger = logging.getLogger(__name__)
 
@@ -245,7 +246,7 @@ class TCPServer:
                 self.handle_connection, host, port
             )
             self.running = True
-            
+        
             # Start background task to check for inactive connections
             self._cleanup_task = asyncio.create_task(
                 self.check_inactive_connections(),
@@ -298,7 +299,7 @@ class TCPServer:
                 self.pending_connections.remove(conn)
             except Exception as e:
                 logger.error(f"Error closing pending connection: {e}")
-        
+                
         logger.info("All connections closed")
         
     async def check_inactive_connections(self):
@@ -468,7 +469,7 @@ class TCPServer:
             
         # Close the connection
         await conn.close()
-
+            
     def check_duplicate_client_id(self, client_id: str, current_conn: TCPConnection) -> bool:
         """
         Check if a client ID already exists in the connections dictionary.
@@ -515,7 +516,7 @@ class TCPServer:
                 del self.connections[client_id]
         except Exception as e:
             logger.error(f"Error closing duplicate connection: {e}")
-            
+                    
     async def handle_command(self, conn: TCPConnection, command: str, peer: tuple) -> bytes:
         """
         Handle a TCP command from a client.
@@ -712,70 +713,46 @@ class TCPServer:
         Returns:
             The working crypto key
         """
-        # Define key variants to test
-        key_variants = {
-            "оригинален с тире": server_key + crypto_dict_part + conn.client_host[:2] + conn.client_host[-1:],
-            "с първи 3 букви от хоста": server_key + crypto_dict_part + conn.client_host[:3],
-            "с първа буква от хоста": server_key + crypto_dict_part + conn.client_host[0],
-            "само частта от речника": server_key + crypto_dict_part,
-            "само сървърски ключ": server_key,
-        }
-        
-        # Test each key variant
-        working_key = None
-        working_key_name = None
-        
-        for variant_name, test_key in key_variants.items():
-            logger.info(f"Testing key variant '{variant_name}': {test_key}")
-            # Create a temporary connection with this key
-            temp_conn = TCPConnection(conn.reader, conn.writer)
-            temp_conn.crypto_key = test_key
-            
-            # Test encryption
-            if temp_conn.test_encryption():
-                logger.info(f"Key variant '{variant_name}' works: {test_key}")
-                working_key = test_key
-                working_key_name = variant_name
-                break
-        
-        # Use the working key or default to the original
-        if working_key:
-            logger.info(f"Using crypto key: {working_key} ({working_key_name})")
-        else:
-            # Construct crypto key (original method)
+        try:
+            # Construct crypto key using the method that matches Windows server
             working_key = server_key + crypto_dict_part + conn.client_host[:2] + conn.client_host[-1:]
-            logger.info(f"Using default crypto key: {working_key} (no variants worked)")
-        
-        # Test encryption with the selected key
-        logger.info("Running thorough crypto key verification tests...")
-        conn.crypto_key = working_key
-        test_result = conn.test_encryption()
-        
-        if not test_result:
-            logger.error(f"Encryption test failed with key: {working_key}")
-            logger.error(f"Last error: {conn.last_error}")
-        else:
-            logger.info("All crypto validation tests passed successfully!")
+            logger.info(f"Using crypto key: {working_key}")
             
-        # Handle debug override if needed
-        if USE_FIXED_DEBUG_KEY:
-            debug_server_key = DEBUG_SERVER_KEY
-            dict_entry = CRYPTO_DICTIONARY[0]
-            crypto_dict_part = dict_entry[:len(debug_server_key)]
-            host_first_chars = conn.client_host[:2]
-            orig_host_last_char = conn.client_host[-1:]
-            
-            working_key = debug_server_key + crypto_dict_part + host_first_chars + orig_host_last_char
+            # Set the crypto key and test encryption
             conn.crypto_key = working_key
-            
-            logger.info(f"DEBUG MODE: Using fixed crypto key: {working_key}")
-            
-            # Test that encryption works with this key
-            logger.info("DEBUG MODE: Testing encryption with fixed key...")
             test_result = conn.test_encryption()
-            logger.info(f"DEBUG MODE: Encryption test result: {test_result}")
-        
-        return working_key
+            
+            if not test_result:
+                logger.error(f"Encryption test failed with key: {working_key}")
+                logger.error(f"Last error: {conn.last_error}")
+            else:
+                logger.info("Crypto validation test passed successfully")
+            
+            # Handle debug override if needed
+            if USE_FIXED_DEBUG_KEY:
+                debug_server_key = DEBUG_SERVER_KEY
+                dict_entry = CRYPTO_DICTIONARY[0]
+                crypto_dict_part = dict_entry[:len(debug_server_key)]
+                host_first_chars = conn.client_host[:2]
+                orig_host_last_char = conn.client_host[-1:]
+                
+                working_key = debug_server_key + crypto_dict_part + host_first_chars + orig_host_last_char
+                conn.crypto_key = working_key
+                
+                logger.info(f"DEBUG MODE: Using fixed crypto key: {working_key}")
+                
+                # Test that encryption works with this key
+                logger.info("DEBUG MODE: Testing encryption with fixed key...")
+                test_result = conn.test_encryption()
+                logger.info(f"DEBUG MODE: Encryption test result: {test_result}")
+            
+            return working_key
+        except Exception as e:
+            logger.error(f"Error testing crypto key variants: {e}", exc_info=True)
+            # Fall back to the original key construction method
+            working_key = server_key + crypto_dict_part + conn.client_host[:2] + conn.client_host[-1:]
+            conn.crypto_key = working_key
+            return working_key
         
     def _format_init_response(self, server_key: str, key_len: int) -> bytes:
         """
@@ -788,102 +765,71 @@ class TCPServer:
         Returns:
             The formatted response bytes
         """
-        # Instead of using predefined formats, let's try a variety of formats
-        # to find what the Delphi client expects
+        # Get format type from environment variable with fallback to default
+        format_type = int(os.environ.get('INIT_RESPONSE_FORMAT', '0'))
+        logger.info(f"Using INIT response format type: {format_type}")
         
-        # Use the environment variable to select the format or default to format 1
-        format_type = os.environ.get('INIT_RESPONSE_FORMAT', '1')
-        
-        if format_type == '1':
-            # Standard Delphi format with CRLF - LEN=8\r\nKEY=ABCDEFGH
-            response_format = f"LEN={key_len}\r\nKEY={server_key}"
-        elif format_type == '2':
-            # TIdReply direct format - 200 LEN=8 KEY=ABCDEFGH\r\n
-            response_format = f"200 LEN={key_len} KEY={server_key}\r\n"
-        elif format_type == '3':
-            # With numeric code and text - 200 OK\r\nLEN={key_len}\r\nKEY={server_key}\r\n
-            response_format = f"200 OK\r\nLEN={key_len}\r\nKEY={server_key}\r\n"
-        elif format_type == '4':
-            # Just key-value pairs with CRLF ending - LEN={key_len}\r\nKEY={server_key}\r\n
-            response_format = f"LEN={key_len}\r\nKEY={server_key}\r\n"
-        elif format_type == '5':
-            # Just key-value pairs with single LF - LEN={key_len}\nKEY={server_key}\n
-            response_format = f"LEN={key_len}\nKEY={server_key}\n"
-        elif format_type == '6':
-            # Just the key - ABCDEFGH
-            response_format = f"{server_key}"
-        elif format_type == '7':
-            # Delphi TStringList.SaveToStream format (count + strings)
-            # First byte is the number of lines (2), then each line with CR/LF
-            response_bytes = bytearray([2])  # Number of lines
-            response_bytes.extend(f"LEN={key_len}\r\n".encode('ascii'))
-            response_bytes.extend(f"KEY={server_key}\r\n".encode('ascii'))
-            return response_bytes
-        elif format_type == '8':
-            # Binary format (length prefixed strings)
-            # First 4 bytes: number of strings (2)
-            # Then each string: 4 bytes length + string data
-            count = 2
-            line1 = f"LEN={key_len}".encode('ascii')
-            line2 = f"KEY={server_key}".encode('ascii')
-            
-            # Build response
-            response_bytes = bytearray()
-            response_bytes.extend(count.to_bytes(4, byteorder='little'))
-            
-            # Add first line
-            line1_len = len(line1)
-            response_bytes.extend(line1_len.to_bytes(4, byteorder='little'))
-            response_bytes.extend(line1)
-            
-            # Add second line
-            line2_len = len(line2)
-            response_bytes.extend(line2_len.to_bytes(4, byteorder='little'))
-            response_bytes.extend(line2)
-            
-            return response_bytes
-        elif format_type == '9':
-            # Synchronous Delphi response format for direct connection
-            # This format is optimized for Delphi clients that expect a synchronous response
-            # It uses a specific binary format expected by Delphi's TIdTCPClient
-            
-            # First create a TStringList equivalent with key-value pairs
-            str_list = [f"LEN={key_len}", f"KEY={server_key}"]
-            
-            # Encode in the format expected by Delphi's synchronous client
-            # Format: <1-byte count><4-byte length><data><4-byte length><data>...
-            response_bytes = bytearray([len(str_list)])  # Number of strings as 1 byte
-            
-            for item in str_list:
-                data = item.encode('ascii')
-                length = len(data)
-                # Add 4-byte length (little endian) followed by data
-                response_bytes.extend(length.to_bytes(4, byteorder='little'))
-                response_bytes.extend(data)
-            
-            logger.info(f"Using synchronous Delphi response format with {len(str_list)} items")
-            logger.info(f"First few bytes: {' '.join([f'{b:02x}' for b in response_bytes[:20]])}")
-            
-            return response_bytes
-        elif format_type == '10':
+        # Format the response according to the specified format
+        if format_type == 0:
             # Original Windows server format - KEY=value,LEN=value
-            # This is the exact format seen in the Windows server logs
-            response_format = f"KEY={server_key},LEN={key_len}"
-            logger.info(f"Using original Windows server format: {response_format}")
+            response = f"KEY={server_key},LEN={key_len}"
+        elif format_type == 1:
+            # Format with name-value pairs with CR+LF and no separating commas
+            response = f"KEY={server_key}\r\nLEN={key_len}"
+        elif format_type == 2:
+            # Format with key-values in specific order (LEN first)
+            response = f"LEN={key_len}\r\nKEY={server_key}"
+        elif format_type == 3:
+            # Format with just the values, no keys
+            response = f"{server_key}\r\n{key_len}"
+        elif format_type == 4:
+            # Format with JSON
+            response = json.dumps({"KEY": server_key, "LEN": key_len})
+        elif format_type == 5:
+            # Format with XML
+            response = f"<response><key>{server_key}</key><len>{key_len}</len></response>"
+        elif format_type == 6:
+            # Format with custom separator
+            response = f"KEY:{server_key}|LEN:{key_len}"
+        elif format_type == 7:
+            # Delphi TStringList.SaveToStream format
+            lines = [
+                f"KEY={server_key}",
+                f"LEN={key_len}"
+            ]
+            # First 4 bytes is count of strings as integer
+            count = len(lines)
+            response_bytes = struct.pack('<I', count)
+            # Then each string with CRLF
+            for line in lines:
+                response_bytes += line.encode('ascii') + b'\r\n'
+            return response_bytes
+        elif format_type == 8:
+            # Binary format with strings - 4 bytes count + (4 bytes length + string data) for each string
+            lines = [
+                f"KEY={server_key}",
+                f"LEN={key_len}"
+            ]
+            # First 4 bytes is count of strings
+            count = len(lines)
+            response_bytes = struct.pack('<I', count)
+            # Then each string with length prefix
+            for line in lines:
+                line_bytes = line.encode('ascii')
+                response_bytes += struct.pack('<I', len(line_bytes)) + line_bytes
+            return response_bytes
         else:
-            # Default to format 1
-            response_format = f"LEN={key_len}\r\nKEY={server_key}"
+            # Default to original format
+            response = f"KEY={server_key},LEN={key_len}"
+            
+        logger.info(f"INIT response: {response}")
         
-        # Convert to bytes if not already done
-        if isinstance(response_format, str):
-            response_bytes = response_format.encode('ascii')
+        # Convert to bytes
+        if isinstance(response, bytes):
+            response_bytes = response
         else:
-            response_bytes = response_format
-        
-        logger.info(f"Using INIT response format: {format_type}")
-        logger.info(f"INIT response: {response_bytes}")
-        logger.info(f"INIT response hex: {' '.join([f'{b:02x}' for b in response_bytes])}")
-        
+            response_bytes = response.encode('ascii')
+            
         return response_bytes
 
     async def _handle_error(self, conn: TCPConnection, parts: List[str]) -> bytes:
@@ -907,48 +853,48 @@ class TCPServer:
             logger.error(f"INIT parameters: ID={conn.client_id}, host={conn.client_host}")
             logger.error(f"Server key: {conn.server_key}, length: {conn.key_length}")
             logger.error(f"Crypto key: {conn.crypto_key}")
-            
-            # Create the proper format string for reference
-            proper_format = f"LEN={conn.key_length}\r\nKEY={conn.server_key}"
-            logger.error(f"Correct response format: '{proper_format}'")
-            
-            # Add more diagnostic information
-            if hasattr(conn, 'last_error') and conn.last_error:
-                logger.error(f"Last error: '{conn.last_error}'")
-            
-            # Log error parts for better analysis
-            logger.error(f"ERRL command full data: {' '.join(parts)}")
-            logger.error(f"ERRL command parts: {parts}")
-            for i, part in enumerate(parts[1:], 1):
-                logger.error(f"ERRL part {i}: '{part}'")
-            
-            logger.error("Анализ: Проблем с форматирането на INIT отговора или неправилен криптиращ ключ.")
-            logger.error(f"INIT параметри: ID={conn.client_id}, host={conn.client_host}")
-            logger.error(f"Изпратен ключ: {conn.server_key}, дължина: {conn.key_length}")
-            
-            # Communication analysis
-            logger.error(f"===== Last Client-Server Communication =====")
-            logger.error(f"Client ID from command: unknown")
-            logger.error(f"Delphi client would parse using: FTCPClient.LastCmdResult.Text.Values['LEN']")
-            logger.error(f"Delphi client would parse using: FTCPClient.LastCmdResult.Text.Values['KEY']")
-            logger.error(f"Expected client key creation: KEY + dict_part + hostname_chars")
-            logger.error(f"Fixed response format (for next attempt): 'LEN={conn.key_length}\r\nKEY={conn.server_key}'")
-            
-            # Host components analysis
-            logger.error("Компоненти на ключа:")
-            logger.error(f"  server_key: {conn.server_key}")
-            logger.error(f"  dict_part: {CRYPTO_DICTIONARY[0][:8]}")
-            logger.error("  host parts variance:")
-            logger.error(f"    first 2 chars: {conn.client_host[:2]}")
-            logger.error(f"    last char: {conn.client_host[-1:]}")
-            logger.error(f"    first 2 + last: {conn.client_host[:2] + conn.client_host[-1:]}")
-            
-            logger.error(f"Последен успешен тест на криптирането със сървърски ключ: {conn.crypto_key}")
-            test_result = conn.test_encryption()
-            logger.error(f"Тест на криптирането: {test_result}")
+        
+        # Create the proper format string for reference
+        proper_format = f"LEN={conn.key_length}\r\nKEY={conn.server_key}"
+        logger.error(f"Correct response format: '{proper_format}'")
+        
+        # Add more diagnostic information
+        if hasattr(conn, 'last_error') and conn.last_error:
+            logger.error(f"Last error: '{conn.last_error}'")
+        
+        # Log error parts for better analysis
+        logger.error(f"ERRL command full data: {' '.join(parts)}")
+        logger.error(f"ERRL command parts: {parts}")
+        for i, part in enumerate(parts[1:], 1):
+            logger.error(f"ERRL part {i}: '{part}'")
+        
+        logger.error("Анализ: Проблем с форматирането на INIT отговора или неправилен криптиращ ключ.")
+        logger.error(f"INIT параметри: ID={conn.client_id}, host={conn.client_host}")
+        logger.error(f"Изпратен ключ: {conn.server_key}, дължина: {conn.key_length}")
+        
+        # Communication analysis
+        logger.error(f"===== Last Client-Server Communication =====")
+        logger.error(f"Client ID from command: unknown")
+        logger.error(f"Delphi client would parse using: FTCPClient.LastCmdResult.Text.Values['LEN']")
+        logger.error(f"Delphi client would parse using: FTCPClient.LastCmdResult.Text.Values['KEY']")
+        logger.error(f"Expected client key creation: KEY + dict_part + hostname_chars")
+        logger.error(f"Fixed response format (for next attempt): 'LEN={conn.key_length}\r\nKEY={conn.server_key}'")
+        
+        # Host components analysis
+        logger.error("Компоненти на ключа:")
+        logger.error(f"  server_key: {conn.server_key}")
+        logger.error(f"  dict_part: {CRYPTO_DICTIONARY[0][:8]}")
+        logger.error("  host parts variance:")
+        logger.error(f"    first 2 chars: {conn.client_host[:2]}")
+        logger.error(f"    last char: {conn.client_host[-1:]}")
+        logger.error(f"    first 2 + last: {conn.client_host[:2] + conn.client_host[-1:]}")
+        
+        logger.error(f"Последен успешен тест на криптирането със сървърски ключ: {conn.crypto_key}")
+        test_result = conn.test_encryption()
+        logger.error(f"Тест на криптирането: {test_result}")
         
         return b'OK'
-
+        
     async def _handle_ping(self, conn: TCPConnection) -> bytes:
         """
         Handle a PING command from a client.
@@ -961,7 +907,7 @@ class TCPServer:
         """
         conn.last_ping = datetime.now()
         return b'PONG'
-
+        
     async def _handle_info(self, conn: TCPConnection, parts: List[str]) -> bytes:
         # Implementation of _handle_info method
         pass
