@@ -766,7 +766,7 @@ class TCPServer:
             The formatted response bytes
         """
         # Get format type from environment variable with fallback to default
-        format_type = int(os.environ.get('INIT_RESPONSE_FORMAT', '0'))
+        format_type = int(os.environ.get('INIT_RESPONSE_FORMAT', '14'))
         logger.info(f"Using INIT response format type: {format_type}")
         
         # Format the response according to the specified format
@@ -784,91 +784,19 @@ class TCPServer:
         elif format_type == 3:
             # Format with just the values, no keys
             response = f"{server_key}\r\n{key_len}"
-        elif format_type == 4:
-            # Format with JSON
-            response = json.dumps({"KEY": server_key, "LEN": key_len})
-        elif format_type == 5:
-            # Format with XML
-            response = f"<response><key>{server_key}</key><len>{key_len}</len></response>"
-        elif format_type == 6:
-            # Format with custom separator
-            response = f"KEY:{server_key}|LEN:{key_len}"
-        elif format_type == 7:
-            # Delphi TStringList.SaveToStream format
-            lines = [
-                f"KEY={server_key}",
-                f"LEN={key_len}"
-            ]
-            # First 4 bytes is count of strings as integer
-            count = len(lines)
-            response_bytes = struct.pack('<I', count)
-            # Then each string with CRLF
-            for line in lines:
-                response_bytes += line.encode('ascii') + b'\r\n'
-            return response_bytes
-        elif format_type == 8:
-            # Binary format with strings - 4 bytes count + (4 bytes length + string data) for each string
-            lines = [
-                f"KEY={server_key}",
-                f"LEN={key_len}"
-            ]
-            # First 4 bytes is count of strings
-            count = len(lines)
-            response_bytes = struct.pack('<I', count)
-            # Then each string with length prefix
-            for line in lines:
-                line_bytes = line.encode('ascii')
-                response_bytes += struct.pack('<I', len(line_bytes)) + line_bytes
-            return response_bytes
-        elif format_type == 9:
-            # Special format that mimics the exact Windows server behavior from logs
-            # Format with a trailing CR+LF for exact Delphi compatibility
-            response = f"KEY={server_key},LEN={key_len}\r\n"
-        elif format_type == 11:
-            # Exact format from original Windows server logs
-            # Notice the space after KEY= and LEN= is not present
-            response = f"KEY={server_key},LEN={key_len}"
-            # The response does not include \r\n at the end
-            # The Windows server is returning exactly this format
-        elif format_type == 12:
-            # Special Delphi TStringList format
-            # Delphi's TStringList with Values['KEY'] expects "KEY=value" on separate lines
-            # Note: This format specifically targets Delphi's Values property expectations
-            response = f"KEY={server_key}\r\nLEN={key_len}\r\n"
-            logger.info(f"Using Delphi TStringList-compatible format: {response!r}")
-        elif format_type == 13:
-            # Hybrid format that should work with most Delphi clients
-            # Format identical to how Delphi's StringList.Values[] works
-            # This ensures the client can parse with LastCmdResult.Text.Values['KEY']
-            response = f"KEY={server_key}"
-            response = response.ljust(40) # Pad to fixed width for extra compatibility
-            response += f"\r\nLEN={key_len}\r\n"
-            logger.info(f"Using hybrid Delphi format: {response!r}")
         elif format_type == 14:
-            # Precise Delphi TStringList format that matches how Delphi TStringList.Values works
-            # For Delphi's LastCmdResult.Text.Values['KEY'] to work correctly:
-            # 1. Each line must end with \r\n
-            # 2. Each name=value pair must be on its own line
-            # 3. No extra spaces around the = sign
-            # 4. No extra blank lines
-            response_lines = []
-            response_lines.append(f"KEY={server_key}")
-            response_lines.append(f"LEN={key_len}")
-            response = "\r\n".join(response_lines) + "\r\n"
-            logger.info(f"Using precise Delphi TStringList format: {response!r}")
+            # IMPORTANT: This is the format that the Delphi TStringList.Values[] expects
+            # LEN first, followed by KEY, each on a separate line with CRLF line endings
+            # The trailing CRLF is critical for Delphi to parse correctly
+            response = f"LEN={key_len}\r\nKEY={server_key}\r\n"
         else:
-            # Default to original format
-            response = f"KEY={server_key},LEN={key_len}"
-            
+            # Default format matching the original Windows server
+            response = f"LEN={key_len}\r\nKEY={server_key}\r\n"
+        
         logger.info(f"INIT response: {response}")
         
-        # Convert to bytes
-        if isinstance(response, bytes):
-            response_bytes = response
-        else:
-            response_bytes = response.encode('ascii')
-            
-        return response_bytes
+        # Convert the response to bytes for sending
+        return response.encode('ascii')
 
     async def _handle_error(self, conn: TCPConnection, parts: List[str]) -> bytes:
         """

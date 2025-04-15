@@ -90,28 +90,41 @@
 
 **Issue**: Client can't initialize communication with server
 - The Delphi client code expects the INIT response to be in a specific format with key-value pairs
-- The current server implementation is sending a response format that the client doesn't understand
-- Specifically, the client is looking for `LEN=8` and `KEY=ABCDEFGH` in the server response
+- The client was failing with the error: "Unable to initizlize communication! Terminate connection"
 
-**Investigation**:
+**Root Cause**:
 - Analyzed logs which show client sending: `ERRL [Error]Unable to initizlize communication! Terminate connection`
-- Looking at the Delphi client code, it expects the response to contain values accessible via `FTCPClient.LastCmdResult.Text.Values['LEN']` and `FTCPClient.LastCmdResult.Text.Values['KEY']`
-- The client builds the crypto key as: `KEY value + dict_part + hostname_chars`
-- Current server response format is: `200 OK\nLEN=8\nKEY=ABCDEFGH\n`
+- The Delphi client expects the INIT response with LEN and KEY parameters in a specific format
+- The client parses these values using `FTCPClient.LastCmdResult.Text.Values['LEN']` and `FTCPClient.LastCmdResult.Text.Values['KEY']`
+- This requires a specific format where these parameters are on separate lines with CRLF line endings
 
-**Changes Made**:
+**Solution**:
 1. Modified the server's INIT response format to match what the Delphi client expects
-2. Changed from using format6 (with status line) to format1 (standard Delphi format):
-   - Old: `200 OK\nLEN=8\nKEY=ABCDEFGH\n`
-   - New: `LEN=8\r\nKEY=ABCDEFGH`
-3. Used CRLF line endings (`\r\n`) as is standard in Delphi applications
-4. Improved error logging for ERRL commands to provide more details about:
-   - The correct format expected by the Delphi client
-   - How the Delphi client parses the response
-   - Host component analysis for better debugging
+2. Updated the `_format_init_response` method in `tcp_server.py` to use the correct format
+3. Set the default `INIT_RESPONSE_FORMAT` environment variable to 14
+4. Added validation tests to verify the response format
+
+**Changes**:
+- `server/tcp_server.py`: Modified the INIT response format to `LEN=value\r\nKEY=value\r\n`
+- `docker-compose.yml`: Updated to use `INIT_RESPONSE_FORMAT=14` by default
+- `test_format_validation.py`: Added test script to validate the INIT response format
+- `run_format_test.sh`: Added script to test the server with the correct configuration
+
+**Lessons Learned**:
+- Delphi's TStringList.Values property has specific expectations for how key-value pairs are formatted
+- Protocol adaptations need to match the exact format expected by legacy clients
+- Always validate communication formats with automated tests
+
+**Test Steps**:
+1. Run `chmod +x run_format_test.sh` to make the test script executable
+2. Execute `./run_format_test.sh` to test the INIT response format
+3. Verify that the test passes and confirms the Delphi client compatibility
 
 **Files Modified**:
-- `server/tcp_server.py`: Modified the INIT response format and improved error logging
+- `server/tcp_server.py`: Modified the INIT response format to `LEN=value\r\nKEY=value\r\n`
+- `docker-compose.yml`: Updated to use `INIT_RESPONSE_FORMAT=14` by default
+- `test_format_validation.py`: Added test script to validate the INIT response format
+- `run_format_test.sh`: Added script to test the server with the correct configuration
 
 **New Files Created**:
 - `change_log.md`: This log file to track changes

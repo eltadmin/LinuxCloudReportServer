@@ -20,7 +20,7 @@ services:
       - DB_NAME=dreports
       - AUTH_SERVER_URL=http://web:8015/dreport/api.php
       - PYTHONPATH=/app
-      - INIT_RESPONSE_FORMAT=${INIT_RESPONSE_FORMAT:-1}
+      - INIT_RESPONSE_FORMAT=${INIT_RESPONSE_FORMAT:-14}
     depends_on:
       db:
         condition: service_healthy
