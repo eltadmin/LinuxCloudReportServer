@@ -242,17 +242,16 @@ func (s *TCPServer) handleConnection(conn *TCPConnection) {
 		}
 		
 		if response != "" {
-			// For INIT command, send exact byte-for-byte response with no processing
+			// For INIT command, send exact byte-for-byte response with NO newline characters
 			if cmd == CMD_INIT {
 				log.Printf("====== SENDING INIT RESPONSE ======")
 				
-				// CRITICAL: Add carriage return and line feed to the original Windows server format
-				// This is the key fix - the Delphi client expects CRLF at the end
-				responseBytes := []byte(response + "\r\n")
+				// CRITICAL: Send EXACT raw response with NO line endings - this is the key fix
+				responseBytes := []byte(response)
 				
 				log.Printf("Raw response: '%s'", response)
-				log.Printf("Response bytes to send: % x", responseBytes)
-				log.Printf("Response bytes length: %d", len(responseBytes))
+				log.Printf("Response bytes (hex): % x", responseBytes)
+				log.Printf("Response length: %d bytes", len(responseBytes))
 				
 				_, err = conn.conn.Write(responseBytes)
 				
@@ -380,7 +379,6 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	log.Printf("Client hostname: %s, ID: %s", hostname, idValue)
 	
 	// HARDCODED KEYS BASED ON ID
-	var response string
 	var serverKey string
 	var lenValue int
 	
@@ -403,21 +401,30 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 		lenValue = 1
 	}
 	
-	// ======= CRITICAL: EXACT RESPONSE FORMAT =======
-	response = fmt.Sprintf("KEY=%s,LEN=%d", serverKey, lenValue)
-	
 	conn.serverKey = serverKey
 	conn.keyLength = lenValue
 	
-	// Get dictionary entry
-	dictIndex := 0
+	// Get dictionary entry - ВАЖНО: Delphi индексира от 1, не от 0
+	dictIndex := 1 // Default value if ID parsing fails
 	if id, err := strconv.Atoi(idValue); err == nil {
-		if id > 0 && id <= len(CRYPTO_DICTIONARY) {
-			dictIndex = id - 1
+		// В Delphi масивите се индексират от 1, затова няма нужда от -1
+		dictIndex = id
+		
+		// Ensure the index is within bounds
+		if dictIndex < 1 {
+			dictIndex = 1
+		} else if dictIndex > len(CRYPTO_DICTIONARY) {
+			dictIndex = dictIndex % len(CRYPTO_DICTIONARY)
+			if dictIndex == 0 { // Защита срещу модул 0
+				dictIndex = 1
+			}
 		}
 	}
 	
-	dictEntry := CRYPTO_DICTIONARY[dictIndex % len(CRYPTO_DICTIONARY)]
+	// Вземи елемента от речника (коригирай индекса за Go, който индексира от 0)
+	dictEntry := CRYPTO_DICTIONARY[dictIndex-1]
+	
+	// Вземи само първите N символа, където N е дължината на ключа
 	cryptoDictPart := dictEntry
 	if len(dictEntry) > len(serverKey) {
 		cryptoDictPart = dictEntry[:len(serverKey)]
@@ -433,24 +440,28 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 		hostLastChar = hostname[len(hostname)-1:]
 	}
 	
-	// Create crypto key
+	// Create crypto key точно като в Delphi кода
 	cryptoKey := serverKey + cryptoDictPart + hostFirstChars + hostLastChar
 	conn.cryptoKey = cryptoKey
 	
+	// EXACT RESPONSE FORMAT
+	response := fmt.Sprintf("KEY=%s,LEN=%d", serverKey, lenValue)
+	
 	// DEBUG PRINT DETAILED INFORMATION
 	log.Printf("=========== INIT RESPONSE DETAILS ===========")
-	log.Printf("ID Value: '%s'", idValue)
+	log.Printf("ID Value: '%s' => Dictionary Index: %d", idValue, dictIndex)
 	log.Printf("Server Key: '%s'", serverKey)
 	log.Printf("LEN Value: %d", lenValue)
 	log.Printf("Response (text): '%s'", response)
 	log.Printf("Response (bytes): % x", []byte(response))
-	log.Printf("Crypto Key: '%s'", cryptoKey)
+	log.Printf("Dictionary Entry [%d]: '%s'", dictIndex, dictEntry)
 	log.Printf("Dictionary Part Used: '%s'", cryptoDictPart)
 	log.Printf("Host First Chars: '%s'", hostFirstChars)
 	log.Printf("Host Last Char: '%s'", hostLastChar)
+	log.Printf("Final Crypto Key: '%s'", cryptoKey)
 	log.Printf("===========================================")
 	
-	// Return the exact hardcoded response - CORE FUNCTIONALITY
+	// Return the exact response without any line endings
 	return response, nil
 }
 
