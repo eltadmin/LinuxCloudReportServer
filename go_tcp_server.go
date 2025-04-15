@@ -246,7 +246,7 @@ func (s *TCPServer) handleConnection(conn *TCPConnection) {
 			if cmd == CMD_INIT {
 				log.Printf("====== SENDING INIT RESPONSE ======")
 				
-				// Важно е да не добавяме null байт, а да изпратим точно както е
+				// НЕ добавлять 0x00 в конец ответа - Delphi этого не ожидает
 				responseBytes := []byte(response)
 				
 				log.Printf("Raw response: '%s'", response)
@@ -424,11 +424,10 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	// Вземи елемента от речника (коригирай индекса за Go, който индексира от 0)
 	dictEntry := CRYPTO_DICTIONARY[dictIndex-1]
 	
-	// ПОПРАВКА: Вземи само първите N символа от речника, но използваме KEY_LENGTH (4), а не lenValue
-	// lenValue е за брой символи от ключа, но в случая използваме целия ключ и първите 4 символа от речника
+	// Вземи само първите N символа, където N е стойността на LEN, който изпращаме
 	cryptoDictPart := dictEntry
-	if len(dictEntry) > KEY_LENGTH {
-		cryptoDictPart = dictEntry[:KEY_LENGTH]
+	if len(dictEntry) > lenValue {
+		cryptoDictPart = dictEntry[:lenValue]
 	}
 	
 	// Extract host parts for key generation
@@ -445,8 +444,9 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	cryptoKey := serverKey + cryptoDictPart + hostFirstChars + hostLastChar
 	conn.cryptoKey = cryptoKey
 	
-	// ОПРОСТЕН ФОРМАТ: ключовете са разделени със запетая без CRLF
-	response := fmt.Sprintf("KEY=%s,LEN=%d", serverKey, lenValue)
+	// ВАЖНО: TStrings.Values изисква KEY=VALUE разделени с \r\n
+	// Delphi клиентът използва точно FTCPClient.LastCmdResult.Text.Values['KEY'] за четене
+	response := fmt.Sprintf("KEY=%s\r\nLEN=%d", serverKey, lenValue)
 	
 	// DEBUG PRINT DETAILED INFORMATION
 	log.Printf("=========== INIT RESPONSE DETAILS ===========")
