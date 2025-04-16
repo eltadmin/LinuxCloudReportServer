@@ -1,23 +1,20 @@
-FROM golang:1.21-alpine AS builder
+FROM golang:1.21-alpine as builder
+
+# Install build dependencies for SQLite
+RUN apk add --no-cache gcc musl-dev
 
 WORKDIR /app
-
-# Copy the Go source file
 COPY go_tcp_server.go .
+COPY go.mod go.sum ./
 
-# Build the Go application
+# Download dependencies and build the app
+RUN go mod download
 RUN go build -o tcp_server go_tcp_server.go
 
-# Use a minimal Alpine image for the final container
 FROM alpine:latest
-
 WORKDIR /app
-
-# Copy the binary from the builder stage
 COPY --from=builder /app/tcp_server .
+COPY dictionary.db ./
 
-# Expose the TCP port
 EXPOSE 8016
-
-# Run the TCP server
 CMD ["./tcp_server"] 

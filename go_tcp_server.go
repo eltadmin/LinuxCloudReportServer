@@ -33,7 +33,12 @@ import (
 	"sync"
 	"time"
 	"compress/zlib"
+	
+	_ "github.com/mattn/go-sqlite3" // SQLite драйвер
 )
+
+// Глобальная переменная для работы с базой данных
+var db *sql.DB
 
 // Configuration constants
 const (
@@ -1070,6 +1075,50 @@ func main() {
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
 		log.Fatalf("Invalid port number: %s", portStr)
+	}
+	
+	// Initialize database connection
+	dbPath := getEnv("DB_PATH", "./dictionary.db")
+	log.Printf("Connecting to database at %s", dbPath)
+	
+	var dbErr error
+	db, dbErr = sql.Open("sqlite3", dbPath)
+	if dbErr != nil {
+		log.Fatalf("Failed to open database: %v", dbErr)
+	}
+	defer db.Close()
+	
+	// Test database connection
+	if testErr := db.Ping(); testErr != nil {
+		log.Fatalf("Failed to connect to database: %v", testErr)
+	}
+	
+	// Ensure the dictionary table exists
+	_, createErr := db.Exec(`
+	CREATE TABLE IF NOT EXISTS dictionary (
+		id TEXT PRIMARY KEY,
+		dict TEXT NOT NULL
+	)`)
+	if createErr != nil {
+		log.Fatalf("Failed to create dictionary table: %v", createErr)
+	}
+	
+	// Initialize with default dictionary entries if table is empty
+	var count int
+	countErr := db.QueryRow("SELECT COUNT(*) FROM dictionary").Scan(&count)
+	if countErr != nil {
+		log.Fatalf("Failed to count dictionary entries: %v", countErr)
+	}
+	
+	if count == 0 {
+		log.Printf("Initializing dictionary with default entries")
+		for i, dict := range CRYPTO_DICTIONARY {
+			_, insertErr := db.Exec("INSERT INTO dictionary (id, dict) VALUES (?, ?)", 
+				strconv.Itoa(i+1), dict)
+			if insertErr != nil {
+				log.Fatalf("Failed to insert dictionary entry: %v", insertErr)
+			}
+		}
 	}
 	
 	// Log startup information

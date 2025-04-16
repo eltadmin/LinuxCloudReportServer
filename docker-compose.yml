@@ -1,21 +1,20 @@
-version: '3.8'
+version: '3'
 
 services:
   go_tcp_server:
     build:
       context: .
       dockerfile: Dockerfile.go
-    ports:
-      - "8016:8016"  # TCP server
+    restart: always
     environment:
       - TCP_HOST=0.0.0.0
       - TCP_PORT=8016
-      - SERVER_DEBUG=true  # Added for debugging
-    depends_on:
-      db:
-        condition: service_healthy
-      web:
-        condition: service_started
+      - DB_PATH=/app/dictionary.db
+      - DEBUG_MODE=true
+    ports:
+      - "8016:8016"
+    volumes:
+      - ./dictionary.db:/app/dictionary.db
 
   report_server:
     build:
