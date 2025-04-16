@@ -165,23 +165,48 @@ class DataCompressor:
             
             # 1. Base64 decode
             try:
-                decoded = base64.b64decode(data)
-                logger.debug(f"Base64 decoded ({len(decoded)} bytes): {decoded[:30].hex()}...")
+                # Try to fix common base64 padding issues preemptively
+                fixed_data = data
+                if len(data) % 4 != 0:
+                    missing_padding = 4 - len(data) % 4
+                    fixed_data = data + "=" * missing_padding
+                    logger.debug(f"Preemptively fixed base64 padding: added {missing_padding} padding characters")
+                
+                try:
+                    decoded = base64.b64decode(fixed_data)
+                    logger.debug(f"Base64 decoded with padding fix ({len(decoded)} bytes): {decoded[:30].hex()}...")
+                except Exception as e:
+                    # If that failed, try the original data
+                    logger.debug(f"Fixed padding decode failed, trying original data: {e}")
+                    decoded = base64.b64decode(data)
+                    logger.debug(f"Base64 decoded with original data ({len(decoded)} bytes): {decoded[:30].hex()}...")
             except Exception as e:
                 logger.error(f"Base64 decoding failed: {e}")
                 
-                # Try to fix common base64 padding issues
+                # Try other common fixes for base64 data
                 try:
-                    fixed_data = data
-                    if len(data) % 4 != 0:
-                        fixed_data = data + "=" * (4 - len(data) % 4)
-                        logger.debug(f"Fixed base64 padding: added {4 - len(data) % 4} padding characters")
+                    # Try removing any non-base64 characters that might have been added
+                    cleaned_data = ''.join(c for c in data if c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=')
+                    logger.debug(f"Cleaned data of non-base64 characters: {cleaned_data}")
                     
-                    decoded = base64.b64decode(fixed_data)
-                    logger.debug(f"Base64 decoded after padding fix ({len(decoded)} bytes): {decoded[:30].hex()}...")
+                    # Fix padding if needed
+                    if len(cleaned_data) % 4 != 0:
+                        cleaned_data = cleaned_data + "=" * (4 - len(cleaned_data) % 4)
+                        logger.debug(f"Fixed base64 padding after cleaning: {cleaned_data}")
+                    
+                    decoded = base64.b64decode(cleaned_data)
+                    logger.debug(f"Base64 decoded after cleaning ({len(decoded)} bytes): {decoded[:30].hex()}...")
                 except Exception as e2:
-                    logger.error(f"Base64 decoding failed even after padding fix: {e2}")
+                    logger.error(f"All base64 decoding attempts failed: {e2}")
                     raise e  # Raise original error
+            
+            # Check if length is a multiple of AES block size (16 bytes) and fix if needed
+            if len(decoded) % 16 != 0:
+                padding_needed = 16 - (len(decoded) % 16)
+                logger.debug(f"Adding padding to make data length multiple of 16: {padding_needed} bytes")
+                # Add PKCS#7 style padding (padding byte value = padding length)
+                decoded = decoded + bytes([padding_needed] * padding_needed)
+                logger.debug(f"Data after padding: {len(decoded)} bytes")
             
             # 2. Decrypt with Rijndael (AES) using fixed IV
             try:

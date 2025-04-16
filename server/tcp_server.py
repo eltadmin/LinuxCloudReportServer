@@ -82,9 +82,11 @@ class TCPConnection:
         self.server_key = None
         self.key_length = None
         self.crypto_key = None
+        self.alt_keys = []  # List of alternative keys to try for this connection
         self.last_error = None
         self.last_activity = datetime.now()
         self.connection_time = datetime.now()
+        self.client_address = f"{self.peer[0]}:{self.peer[1]}" if self.peer else "Unknown"
 
     def encrypt_data(self, data: str) -> Optional[str]:
         """
@@ -725,6 +727,20 @@ class TCPServer:
             # Special handling for ID=5
             conn.crypto_key = "D5F2cNE-"
             logger.info(f"Using hardcoded crypto key for ID=5: {conn.crypto_key}")
+        elif key_id == 2:
+            # Special handling for ID=2 - use standard key but also store alternatives
+            # Create crypto key using exactly the same method as Go server
+            crypto_key = server_key + str(key_id) + host_first_chars + host_last_char
+            conn.crypto_key = crypto_key
+            logger.info(f"Generated regular crypto key for ID {key_id}: {crypto_key}")
+            
+            # Store alternative keys for testing
+            conn.alt_keys = [
+                server_key + "T" + host_first_chars + host_last_char,  # Using second char from dictionary
+                "D5F2TNE-",  # Hardcoded pattern
+                "D5F22NE-",  # ID explicit
+            ]
+            logger.info(f"Stored alternative keys for ID=2: {conn.alt_keys}")
         else:
             # Create crypto key using exactly the same method as Go server
             crypto_key = server_key + str(key_id) + host_first_chars + host_last_char
@@ -931,6 +947,69 @@ class TCPServer:
         # Try to decrypt data
         try:
             decrypted = conn.decrypt_data(data_param)
+            
+            # Special handling for client ID=2 if decryption failed
+            if not decrypted and conn.client_id == "2":
+                logger.info("Special handling for client ID=2: Trying alternative keys")
+                
+                # Try using stored alternative keys if available
+                if hasattr(conn, 'alt_keys') and conn.alt_keys:
+                    logger.info(f"Using {len(conn.alt_keys)} stored alternative keys")
+                    for i, alt_key in enumerate(conn.alt_keys):
+                        logger.info(f"Trying stored alternative key {i+1}: {alt_key}")
+                        # Temporarily set the crypto key to the alternative
+                        original_key = conn.crypto_key
+                        conn.crypto_key = alt_key
+                        alt_decrypted = conn.decrypt_data(data_param)
+                        
+                        if alt_decrypted:
+                            logger.info(f"Alternative key {i+1} worked: {alt_key}")
+                            decrypted = alt_decrypted
+                            # Leave the crypto_key set to the working key
+                            break
+                        else:
+                            # Reset to original key if this alternative didn't work
+                            conn.crypto_key = original_key
+                else:
+                    # Generate on-the-fly alternative keys
+                    # Get host parts for alternative keys
+                    host_first_chars = conn.client_host[:2] if conn.client_host and len(conn.client_host) >= 2 else "NE"
+                    host_last_char = conn.client_host[-1:] if conn.client_host and len(conn.client_host) >= 1 else "-"
+                    
+                    # Try alternative 1: Using second character from dictionary entry
+                    alt_key1 = f"D5F2T{host_first_chars}{host_last_char}"
+                    logger.info(f"Trying alternative key 1: {alt_key1}")
+                    original_key = conn.crypto_key
+                    conn.crypto_key = alt_key1
+                    decrypted = conn.decrypt_data(data_param)
+                    
+                    # Try alternative 2: Hardcoded key pattern
+                    if not decrypted:
+                        # Reset to original key
+                        conn.crypto_key = original_key
+                        
+                        alt_key2 = "D5F2TNE-"
+                        logger.info(f"Trying alternative key 2: {alt_key2}")
+                        conn.crypto_key = alt_key2
+                        decrypted = conn.decrypt_data(data_param)
+                    
+                    # Try alternative 3: Using explicit ID
+                    if not decrypted:
+                        # Reset to original key
+                        conn.crypto_key = original_key
+                        
+                        alt_key3 = "D5F22NE-"
+                        logger.info(f"Trying alternative key 3: {alt_key3}")
+                        conn.crypto_key = alt_key3
+                        decrypted = conn.decrypt_data(data_param)
+                    
+                    # If still not successful, reset to original key
+                    if not decrypted:
+                        conn.crypto_key = original_key
+                    
+                if decrypted:
+                    logger.info(f"Alternative key worked for client ID=2: {conn.crypto_key}")
+            
             if not decrypted:
                 logger.error(f"Failed to decrypt INFO data: {conn.last_error}")
                 return b'ERROR Failed to decrypt data'
