@@ -43,21 +43,6 @@ services:
       web:
         condition: service_started
 
-  proxy_server:
-    build:
-      context: .
-      dockerfile: Dockerfile.server
-    ports:
-      - "8017:8017"  # Proxy server port
-    volumes:
-      - ./server:/app/server
-      - ./:/app
-    command: python3 /app/tcp_proxy.py ${TARGET_HOST:-127.0.0.1} ${TARGET_PORT:-8016} 0.0.0.0 8017
-    environment:
-      - PYTHONPATH=/app
-    depends_on:
-      - go_tcp_server
-
   web:
     build:
       context: .
