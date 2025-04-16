@@ -39,7 +39,6 @@ import (
 // Configuration constants
 const (
 	DEBUG_MODE           = true
-	DEBUG_SERVER_KEY     = "D5F2" // 4-character key like original Windows server
 	USE_FIXED_DEBUG_KEY  = true
 	KEY_LENGTH           = 4      // 4 characters like in logs
 	CONNECTION_TIMEOUT   = 300    // 5 minutes
@@ -47,6 +46,11 @@ const (
 	KEY_FILE           = "/app/keys/server.key"   // Path to store the server key in mounted volume
 	KEY_ENV_VAR        = "SERVER_KEY"        // Environment variable name for server key
 	DEFAULT_SERVER_KEY = "D5F2"              // Default key prefix if no key is found
+)
+
+// Global variables
+var (
+	DEBUG_SERVER_KEY = DEFAULT_SERVER_KEY  // Server key, can be updated at runtime
 )
 
 // Command constants
@@ -1082,15 +1086,6 @@ func generateServerKeyIfNeeded() string {
 		return envKey
 	}
 	
-	// Create directory for key if it doesn't exist
-	keyDir := filepath.Dir(KEY_FILE)
-	if _, err := os.Stat(keyDir); os.IsNotExist(err) {
-		log.Printf("Creating key directory: %s", keyDir)
-		if err := os.MkdirAll(keyDir, 0755); err != nil {
-			log.Printf("Warning: Failed to create key directory: %v", err)
-		}
-	}
-	
 	// Next, check if key exists in file
 	if _, err := os.Stat(KEY_FILE); err == nil {
 		// Key file exists
@@ -1155,6 +1150,12 @@ func main() {
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
 		log.Fatalf("Invalid port number: %s", portStr)
+	}
+	
+	// Create keys directory if it doesn't exist
+	keyDir := filepath.Dir(KEY_FILE)
+	if err := os.MkdirAll(keyDir, 0755); err != nil {
+		log.Printf("Warning: Failed to create key directory: %v", err)
 	}
 	
 	// Generate or load the server key
