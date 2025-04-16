@@ -43,7 +43,7 @@ CMD_SRSP = 'SRSP'
 
 # Response format constants
 RESPONSE_FORMATS = {
-    'standard': "KEY={}\r\nLEN={}",  # KEY first with CRLF, no trailing CRLF
+    'standard': "200-KEY={}\r\n200 LEN={}\r\n",  # Format matching Go TCP server implementation
 }
 
 # Timeout constants (seconds)
@@ -433,8 +433,8 @@ class TCPServer:
         try:
             # Convert string to bytes if necessary
             if isinstance(response, str):
-                # Check if this is an INIT response (has KEY= and LEN=)
-                is_init_response = "KEY=" in response and "LEN=" in response
+                # Check if this is an INIT response (has 200-KEY= and 200 LEN=)
+                is_init_response = "200-KEY=" in response and "200 LEN=" in response
                 
                 # For INIT responses, don't add any line endings
                 # For other responses, ensure CRLF if not already there
@@ -445,7 +445,7 @@ class TCPServer:
             else:
                 # For bytes responses, only add CRLF if not already present and not INIT response
                 response_bytes = response
-                is_init_bytes = b"KEY=" in response_bytes and b"LEN=" in response_bytes
+                is_init_bytes = b"200-KEY=" in response_bytes and b"200 LEN=" in response_bytes
                 
                 if not is_init_bytes and not response_bytes.endswith(b'\r\n'):
                     response_bytes += b'\r\n'
@@ -645,7 +645,7 @@ class TCPServer:
             crypto_key = f"{server_key}{dictionary_part}{host_first_chars}{host_last_char}"
             conn.set_crypto_key(crypto_key)
             
-            # Format and send the response: KEY=server_key\r\nLEN=key_length
+            # Format and send the response: 200-KEY=server_key\r\n200 LEN=key_length\r\n
             response = self._format_init_response(server_key, key_length)
             logging.info(f"Sending INIT response: {response}")
             
@@ -783,8 +783,8 @@ class TCPServer:
         Returns:
             Formatted response string
         """
-        # Format with KEY first, then LEN, without the final \r\n
-        return f"KEY={server_key}\r\nLEN={key_length}"
+        # Format to match the Go TCP server's format exactly: "200-KEY=xxx\r\n200 LEN=y\r\n"
+        return f"200-KEY={server_key}\r\n200 LEN={key_length}\r\n"
         
     async def _handle_error(self, conn: TCPConnection, parts: List[str]) -> bytes:
         """
@@ -809,7 +809,7 @@ class TCPServer:
             logger.error(f"Crypto key: {conn.crypto_key}")
         
         # Create the proper format string for reference
-        proper_format = f"KEY={conn.server_key}\r\nLEN={conn.key_length}"
+        proper_format = f"200-KEY={conn.server_key}\r\n200 LEN={conn.key_length}\r\n"
         logger.error(f"Correct response format: '{proper_format}'")
         
         # Add more diagnostic information
@@ -832,7 +832,7 @@ class TCPServer:
         logger.error(f"Delphi client would parse using: FTCPClient.LastCmdResult.Text.Values['LEN']")
         logger.error(f"Delphi client would parse using: FTCPClient.LastCmdResult.Text.Values['KEY']")
         logger.error(f"Expected client key creation: KEY + dict_part + hostname_chars")
-        logger.error(f"Fixed response format (for next attempt): 'KEY={conn.server_key}\r\nLEN={conn.key_length}'")
+        logger.error(f"Fixed response format (for next attempt): '200-KEY={conn.server_key}\r\n200 LEN={conn.key_length}\r\n'")
         
         # Host components analysis - safely handle None values
         logger.error("Компоненти на ключа:")
