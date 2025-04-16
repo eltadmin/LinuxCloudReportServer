@@ -64,6 +64,18 @@ file = logs/server.log
     Write-Host "Config directory exists." -ForegroundColor Yellow
 }
 
+# Fix Go module dependencies
+Write-Host "Checking and fixing Go module dependencies..." -ForegroundColor Cyan
+try {
+    $goVersion = & go version
+    Write-Host "Go is installed: $goVersion" -ForegroundColor Green
+    Write-Host "Updating go.sum..." -ForegroundColor Cyan
+    & go mod tidy
+    Write-Host "Go modules updated." -ForegroundColor Green
+} catch {
+    Write-Host "Go is not installed locally. The go.sum will be updated during Docker build." -ForegroundColor Yellow
+}
+
 # Check Docker and Docker Compose installation
 Write-Host "Checking Docker installation..." -ForegroundColor Cyan
 try {

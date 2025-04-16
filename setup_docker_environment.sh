@@ -63,6 +63,16 @@ else
     echo "Config directory exists."
 fi
 
+# Fix Go module dependencies
+echo "Checking and fixing Go module dependencies..."
+if command -v go &> /dev/null; then
+    echo "Go is installed, updating go.sum..."
+    go mod tidy
+    echo "Go modules updated."
+else
+    echo "Go is not installed locally. The go.sum will be updated during Docker build."
+fi
+
 # Check Docker and Docker Compose installation
 echo "Checking Docker installation..."
 if ! command -v docker &> /dev/null; then

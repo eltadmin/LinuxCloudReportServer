@@ -11,6 +11,7 @@ COPY go.sum* .
 
 # Download dependencies
 RUN go mod download
+RUN go get github.com/mattn/go-sqlite3
 
 # Copy source code
 COPY go_tcp_server.go .
