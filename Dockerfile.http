@@ -1,0 +1,28 @@
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# Install required packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy server code
+COPY main.py .
+COPY server/ server/
+COPY config/ config/
+
+# Create directories
+RUN mkdir -p logs uploads templates static
+
+# Expose port
+EXPOSE 8000
+
+# Run the application
+CMD ["python", "main.py"] 

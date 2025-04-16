@@ -6,14 +6,14 @@ WORKDIR /app
 RUN apk add --no-cache gcc musl-dev
 
 # Copy go.mod and go.sum
-COPY LinuxCloudReportServer/go.mod .
-COPY LinuxCloudReportServer/go.sum* .
+COPY go.mod .
+COPY go.sum* .
 
 # Download dependencies
 RUN go mod download
 
 # Copy source code
-COPY LinuxCloudReportServer/go_tcp_server.go .
+COPY go_tcp_server.go .
 
 # Build the Go application
 RUN go build -o go_tcp_server go_tcp_server.go
