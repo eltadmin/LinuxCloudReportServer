@@ -585,166 +585,137 @@ func (s *TCPServer) handlePing(conn *TCPConnection) (string, error) {
 
 // Handle the INFO command
 func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, error) {
-	// Check for valid command format
+	log.Printf("[ID=%s] Processing INFO command: %s", conn.clientID, strings.Join(parts, " "))
+	
+	// CMD=INFO|DATA=<base64 data>
+	// Validate command format
 	if len(parts) < 2 {
-		return "ERROR Invalid INFO command", nil
+		log.Printf("[ID=%s] Invalid INFO command format, missing DATA parameter", conn.clientID)
+		return "", fmt.Errorf("invalid command format, expected CMD=INFO|DATA=...")
 	}
 	
-	// Extract DATA parameter
-	var encryptedData string
-	for _, part := range parts[1:] {
+	var dataParam string
+	for _, part := range parts {
 		if strings.HasPrefix(part, "DATA=") {
-			encryptedData = part[5:] // everything after "DATA="
+			dataParam = strings.TrimPrefix(part, "DATA=")
 			break
 		}
 	}
 	
-	if encryptedData == "" {
-		return "ERROR No DATA parameter in INFO command", nil
+	if dataParam == "" {
+		log.Printf("[ID=%s] Invalid INFO command, DATA parameter is empty", conn.clientID)
+		return "", fmt.Errorf("DATA parameter is empty")
 	}
 	
-	// Client identification details
-	clientID := conn.clientID
-	if clientID == "" {
-		clientID = "1" // Fallback ID if not set
+	log.Printf("[ID=%s] Processing INFO command with DATA: %s", conn.clientID, dataParam)
+	
+	// Get dictionary entry for this client ID
+	dictEntry, err := getDictionaryEntry(conn.clientID)
+	if err != nil {
+		log.Printf("[ID=%s] Error getting dictionary entry: %s", conn.clientID, err)
+		return "", err
 	}
+	log.Printf("[ID=%s] Dictionary entry: %s", conn.clientID, dictEntry)
 	
-	// Log the incoming data details
-	log.Printf("===== INFO Command Processing =====")
-	log.Printf("Client ID: %s, Host: %s, Key: %s, Length: %d", 
-		clientID, conn.clientHost, conn.serverKey, conn.keyLength)
-	log.Printf("Encrypted data length: %d chars", len(encryptedData))
-	log.Printf("Using crypto key: '%s'", conn.cryptoKey)
+	// Generate crypto key from dictionary entry
+	idValue := conn.clientID
 	
-	// Special handling for specific client IDs
-	idNum, _ := strconv.Atoi(clientID)
+	// Generate the crypto key based on ID
+	var cryptoKey string
 	
-	// Force specific known working keys for certain client IDs
-	switch idNum {
-	case 5:
-		log.Printf("Special handling for client ID=5")
-		if conn.cryptoKey != "D5F2cNE-" {
-			log.Printf("Fixing key for ID=5: using 'D5F2cNE-' instead of '%s'", conn.cryptoKey)
-			conn.cryptoKey = "D5F2cNE-"
-		}
-	case 9:
-		log.Printf("Special handling for client ID=9")
-		if conn.cryptoKey != "D5F22NE-" {
-			log.Printf("Fixing key for ID=9: using 'D5F22NE-' instead of '%s'", conn.cryptoKey)
-			conn.cryptoKey = "D5F22NE-"
-		}
-	}
-	
-	// Ensure the data is properly padded for Base64 decoding
-	if len(encryptedData) % 4 != 0 {
-		paddingNeeded := 4 - (len(encryptedData) % 4)
-		paddedData := encryptedData + strings.Repeat("=", paddingNeeded)
-		log.Printf("Added %d '=' padding characters to Base64 data", paddingNeeded)
-		encryptedData = paddedData
-	}
-	
-	// Try to decrypt using the crypto key
-	decryptedData := decompressData(encryptedData, conn.cryptoKey)
-	
-	// Check if decryption succeeded
-	if decryptedData == "" {
-		log.Printf("ERROR: Failed to decrypt INFO data with key '%s'", conn.cryptoKey)
-		
-		// As a fallback, try different dictionaries or keys for this client
-		if idNum <= len(CRYPTO_DICTIONARY) {
-			dictEntry := CRYPTO_DICTIONARY[idNum-1]
-			altKeys := []string{
-				conn.serverKey + dictEntry[:1] + conn.clientHost[:2] + conn.clientHost[len(conn.clientHost)-1:],
-				conn.serverKey + dictEntry[:2] + conn.clientHost[:2] + conn.clientHost[len(conn.clientHost)-1:],
-				"D5F2" + dictEntry[:1] + "NE-", // Common format
-			}
-			
-			log.Printf("Trying %d alternative keys...", len(altKeys))
-			
-			for i, altKey := range altKeys {
-				if altKey == conn.cryptoKey {
-					continue // Skip the current key
-				}
-				
-				log.Printf("Try #%d: Using key '%s'", i+1, altKey)
-				altDecrypted := decompressData(encryptedData, altKey)
-				
-				if altDecrypted != "" {
-					log.Printf("SUCCESS! Alternative key '%s' worked", altKey)
-					decryptedData = altDecrypted
-					conn.cryptoKey = altKey // Update the connection's key
-					break
-				}
-			}
-		}
-		
-		// If still failed, return error
-		if decryptedData == "" {
-			return "ERROR Failed to decrypt data", nil
+	// Special handling for ID=9
+	if idValue == "9" {
+		// For ID=9, use hardcoded key that works with the client
+		cryptoKey = "D5F22NE-"
+		log.Printf("[ID=%s] SPECIAL CASE: Using hard-coded key for ID=9: %s", conn.clientID, cryptoKey)
+	} else if idValue == "5" {
+		// Special handling for ID=5
+		cryptoKey = "D5F2cNE-"
+		log.Printf("[ID=%s] SPECIAL CASE: Using hard-coded key for ID=5: %s", conn.clientID, cryptoKey)
+	} else {
+		// Default key generation
+		cryptoLen := 1 // Default length
+		if len(dictEntry) > 0 {
+			cryptoKey = dictEntry[:cryptoLen] + "NE-"
+			log.Printf("[ID=%s] Generated crypto key: %s", conn.clientID, cryptoKey)
+		} else {
+			log.Printf("[ID=%s] Error: Dictionary entry is empty", conn.clientID)
+			return "", fmt.Errorf("empty dictionary entry")
 		}
 	}
 	
-	// Log the decrypted data
-	log.Printf("Successfully decrypted data: '%s'", decryptedData)
+	// Store the key for this connection
+	conn.cryptoKey = cryptoKey
+	
+	// Add padding if needed for Base64 decoding
+	paddedData := dataParam
+	for len(paddedData)%4 != 0 {
+		paddedData += "="
+		log.Printf("[ID=%s] Added padding to Base64 data", conn.clientID)
+	}
+	
+	// Attempt to decrypt the data
+	log.Printf("[ID=%s] Attempting to decrypt with key: %s", conn.clientID, cryptoKey)
+	decrypted, decErr := decompressData(paddedData, cryptoKey)
+	if decErr != nil {
+		log.Printf("[ID=%s] Failed to decrypt data with key '%s': %v", conn.clientID, cryptoKey, decErr)
+		return "", fmt.Errorf("failed to decrypt data: %w", decErr)
+	}
+	
+	log.Printf("[ID=%s] Successfully decrypted data: %s", conn.clientID, decrypted)
 	
 	// Parse parameters from decrypted data
+	// Expected format: NAME=<n>|SERVER=<server>|DB=<db>|USER=<user>|PASS=<pass>
 	params := make(map[string]string)
-	
-	// Try multiple separators: \r\n, \n, or ;
-	separators := []string{"\r\n", "\n", ";"}
-	foundParams := false
-	
-	for _, sep := range separators {
-		lines := strings.Split(decryptedData, sep)
-		
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			
-			if pos := strings.Index(line, "="); pos > 0 {
-				key := strings.TrimSpace(line[:pos])
-				value := strings.TrimSpace(line[pos+1:])
-				params[key] = value
-				log.Printf("Extracted parameter: %s = %s", key, value)
-				foundParams = true
-			}
-		}
-		
-		if foundParams {
-			log.Printf("Successfully parsed parameters using separator: '%s'", sep)
-			break
+	decryptedParts := strings.Split(decrypted, "|")
+	for _, part := range decryptedParts {
+		kv := strings.SplitN(part, "=", 2)
+		if len(kv) == 2 {
+			params[kv[0]] = kv[1]
 		}
 	}
 	
-	if !foundParams {
-		log.Printf("WARNING: No parameters found in decrypted data")
+	// Log the parsed parameters
+	log.Printf("[ID=%s] Parsed parameters: %+v", conn.clientID, params)
+	
+	// Check if we have all required credentials
+	requiredParams := []string{"NAME", "SERVER", "DB", "USER", "PASS"}
+	missingParams := []string{}
+	for _, param := range requiredParams {
+		if _, ok := params[param]; !ok {
+			missingParams = append(missingParams, param)
+		}
 	}
 	
-	// Create response data exactly as expected by Delphi client
-	// This format is critical for the client to recognize the response
-	responseData := "TT=Test\r\n" // Validation field must be first
-	responseData += "ID=" + clientID + "\r\n"
-	responseData += "EX=321231\r\n" // Expiry date
-	responseData += "EN=true\r\n"   // Enabled flag
-	responseData += "CD=220101\r\n" // Creation date
-	responseData += "CT=120000\r\n" // Creation time
+	if len(missingParams) > 0 {
+		log.Printf("[ID=%s] Missing required parameters: %v", conn.clientID, missingParams)
+		return "", fmt.Errorf("missing required parameters: %v", missingParams)
+	}
 	
-	log.Printf("Prepared response data: %s", responseData)
+	// Store the credentials
+	conn.clientHost = params["SERVER"]
+	conn.appType = params["DB"]
+	conn.appVersion = params["PASS"]
 	
-	// Encrypt the response
-	encrypted := compressData(responseData, conn.cryptoKey)
+	log.Printf("[ID=%s] Received credentials for client %s", conn.clientID, params["NAME"])
+	
+	// Prepare the response expected by the Delphi client
+	// Important: Include a newline character at the end - this is expected by the Delphi client
+	responseData := fmt.Sprintf("CMD=INFO|RESULT=OK|IP=%s|KEYVER=1.0|NAME=%s\n", 
+		conn.conn.RemoteAddr().String(), params["NAME"])
+	
+	log.Printf("[ID=%s] Response data before encryption: %s", conn.clientID, responseData)
+	
+	// Encrypt the response with the same key used for decryption
+	encrypted := compressData(responseData, cryptoKey)
 	if encrypted == "" {
-		log.Printf("ERROR: Failed to encrypt response data")
-		return "ERROR Failed to encrypt response", nil
+		log.Printf("[ID=%s] Failed to encrypt response", conn.clientID)
+		return "", fmt.Errorf("failed to encrypt response")
 	}
 	
-	// Format the final response as expected by Delphi client
-	response := "200 OK\r\nDATA=" + encrypted + "\r\n"
-	
-	log.Printf("Sending encrypted response of length: %d chars", len(encrypted))
-	log.Printf("===== INFO Command Complete =====")
+	// Format the response exactly as expected by Delphi client
+	response := fmt.Sprintf("CMD=INFO|DATA=%s", encrypted)
+	log.Printf("[ID=%s] Final response: %s", conn.clientID, response)
 	
 	return response, nil
 }
@@ -779,9 +750,68 @@ func generateRandomKey(length int) string {
 	return string(result)
 }
 
-// Helper function to compress data using zlib and encrypt with AES
+// Encrypt and compress data using zlib and AES-CBC with the provided key
 func compressData(data string, key string) string {
-	log.Printf("Encrypting data with key: '%s'", key)
+	log.Printf("Compressing data with key: '%s'", key)
+	
+	// Use MD5 hash of the key as the AES key
+	hasher := md5.New()
+	hasher.Write([]byte(key))
+	aesKey := hasher.Sum(nil)
+	log.Printf("AES key (MD5 hash): %x", aesKey)
+	
+	// Compress data with zlib
+	var zlibBuf bytes.Buffer
+	zlibWriter := zlib.NewWriter(&zlibBuf)
+	_, err := zlibWriter.Write([]byte(data))
+	if err != nil {
+		log.Printf("ERROR: Failed to compress data with zlib: %v", err)
+		return ""
+	}
+	zlibWriter.Close()
+	compressed := zlibBuf.Bytes()
+	log.Printf("Data after zlib compression (len=%d): %x", len(compressed), compressed)
+	
+	// Pad data to be multiple of AES block size using PKCS#7 padding
+	blockSize := aes.BlockSize
+	padding := blockSize - (len(compressed) % blockSize)
+	padtext := bytes.Repeat([]byte{byte(padding)}, padding)
+	padded := append(compressed, padtext...)
+	log.Printf("Padded data before encryption (len=%d): %x", len(padded), padded)
+	
+	// Create AES cipher
+	block, err := aes.NewCipher(aesKey)
+	if err != nil {
+		log.Printf("ERROR: Failed to create AES cipher: %v", err)
+		return ""
+	}
+	
+	// For compatibility with existing client, use zero IV
+	iv := make([]byte, aes.BlockSize)
+	log.Printf("Using IV: %x", iv)
+	
+	// Encrypt using AES-CBC
+	ciphertext := make([]byte, len(padded))
+	mode := cipher.NewCBCEncrypter(block, iv)
+	mode.CryptBlocks(ciphertext, padded)
+	log.Printf("Encrypted data (len=%d): %x", len(ciphertext), ciphertext)
+	
+	// Special handling for client ID 9
+	if strings.HasPrefix(key, "D5F22NE-") {
+		log.Printf("Special handling for ID=9 in compressData")
+		// Any special processing for ID=9 goes here
+	}
+	
+	// Encode in Base64
+	encoded := base64.StdEncoding.EncodeToString(ciphertext)
+	log.Printf("Base64 encoded data (len=%d): %s", len(encoded), encoded)
+	
+	return encoded
+}
+
+// Helper function to decrypt data and decompress with zlib
+func decompressData(data string, key string) (string, error) {
+	log.Printf("Decrypting data with key: '%s'", key)
 	
 	// 1. Generate MD5 hash of the key for AES key (to match Delphi's DCPcrypt)
 	keyHash := md5.Sum([]byte(key))
@@ -790,224 +820,81 @@ func compressData(data string, key string) string {
 	log.Printf("MD5 key hash: %x", keyHash)
 	log.Printf("AES key: %x", aesKey)
 	
-	// 2. Compress data with zlib
-	var compressedBuf bytes.Buffer
-	zw, err := zlib.NewWriterLevel(&compressedBuf, zlib.BestCompression)
+	// 2. Check and add back Base64 padding if needed
+	mod4 := len(data) % 4
+	if mod4 > 0 {
+		padding := strings.Repeat("=", 4-mod4)
+		data = data + padding
+		log.Printf("Added %d '=' padding characters to Base64 data", 4-mod4)
+	}
+	
+	// 3. Base64 decode
+	ciphertext, err := base64.StdEncoding.DecodeString(data)
 	if err != nil {
-		log.Printf("Error creating zlib writer: %v", err)
-		return ""
+		return "", fmt.Errorf("failed to decode base64: %v", err)
 	}
 	
-	_, err = zw.Write([]byte(data))
-	if err != nil {
-		log.Printf("Error compressing data: %v", err)
-		zw.Close()
-		return ""
+	log.Printf("Decoded Base64 data (%d bytes): %x", len(ciphertext), ciphertext[:min(16, len(ciphertext))])
+	
+	// Check if data length is a multiple of AES block size
+	if len(ciphertext) % aes.BlockSize != 0 {
+		return "", fmt.Errorf("ciphertext length not a multiple of AES block size: %d", len(ciphertext))
 	}
 	
-	err = zw.Close()
-	if err != nil {
-		log.Printf("Error closing zlib writer: %v", err)
-		return ""
-	}
-	
-	compressed := compressedBuf.Bytes()
-	log.Printf("Compressed data (%d bytes): %x", len(compressed), compressed[:min(16, len(compressed))])
-	
-	// 3. Ensure data is a multiple of AES block size (16 bytes)
-	blockSize := aes.BlockSize
-	padding := blockSize - (len(compressed) % blockSize)
-	if padding == 0 {
-		padding = blockSize
-	}
-	
-	// Use PKCS#7 padding
-	paddingBytes := bytes.Repeat([]byte{byte(padding)}, padding)
-	padded := append(compressed, paddingBytes...)
-	
-	log.Printf("Padded data (%d bytes), added %d bytes of padding value %d", 
-		len(padded), padding, padding)
-	
-	// 4. Encrypt with AES-CBC using zero IV (matches Delphi implementation)
+	// 4. Decrypt with AES-CBC
 	block, err := aes.NewCipher(aesKey)
 	if err != nil {
-		log.Printf("Error creating AES cipher: %v", err)
-		return ""
+		return "", fmt.Errorf("failed to create AES cipher: %v", err)
 	}
 	
-	// Zero IV vector - exactly as in Delphi
+	// Create IV matching what Delphi expects (all zeroes)
 	iv := make([]byte, aes.BlockSize)
+	log.Printf("Using IV: %x", iv)
 	
-	// Encrypt
-	ciphertext := make([]byte, len(padded))
-	mode := cipher.NewCBCEncrypter(block, iv)
-	mode.CryptBlocks(ciphertext, padded)
-	
-	log.Printf("Encrypted data (%d bytes): %x", len(ciphertext), ciphertext[:min(16, len(ciphertext))])
-	
-	// 5. Base64 encode without padding - always remove padding as the Delphi client expects
-	encoded := base64.StdEncoding.EncodeToString(ciphertext)
-	encoded = strings.TrimRight(encoded, "=")
-	
-	log.Printf("Base64 encoded without padding (%d bytes): %s", len(encoded), encoded[:min(32, len(encoded))])
-	
-	return encoded
-}
-
-// Helper function to decrypt data
-func decompressData(data string, key string) string {
-	if data == "" || key == "" {
-		log.Printf("ERROR: Empty data or key in decompressData")
-		return ""
-	}
-
-	log.Printf("Decompressing data with key: %s", key)
-	
-	// 1. Add padding to the Base64 data if needed
-	paddedData := data
-	switch len(data) % 4 {
-	case 2:
-		paddedData += "=="
-	case 3:
-		paddedData += "="
-	}
-	
-	// 2. Decode Base64
-	decoded, err := base64.StdEncoding.DecodeString(paddedData)
-	if err != nil {
-		log.Printf("ERROR decoding Base64: %v - trying URL encoding", err)
-		// Try URL-safe Base64 as fallback
-		decoded, err = base64.URLEncoding.DecodeString(paddedData)
-		if err != nil {
-			log.Printf("ERROR decoding with URL-safe Base64: %v", err)
-			return ""
-		}
-	}
-	
-	log.Printf("Decoded Base64 length: %d bytes", len(decoded))
-	
-	// 3. Adjust data length to be valid for AES decryption (multiple of block size)
-	if len(decoded) % aes.BlockSize != 0 {
-		log.Printf("WARNING: Data length %d is not a multiple of block size %d, padding...", 
-			len(decoded), aes.BlockSize)
-		
-		// Add PKCS#7 padding
-		padding := aes.BlockSize - (len(decoded) % aes.BlockSize)
-		padded := make([]byte, len(decoded) + padding)
-		copy(padded, decoded)
-		for i := 0; i < padding; i++ {
-			padded[len(decoded) + i] = byte(padding)
-		}
-		decoded = padded
-		log.Printf("Padded data to %d bytes", len(decoded))
-	}
-	
-	// 4. Create AES cipher with MD5 of key (to match DCPcrypt)
-	hasher := md5.New()
-	hasher.Write([]byte(key))
-	aesKey := hasher.Sum(nil)
-	
-	log.Printf("AES key from MD5 of '%s': %x", key, aesKey)
-	
-	// 5. Create AES cipher
-	block, err := aes.NewCipher(aesKey)
-	if err != nil {
-		log.Printf("ERROR creating AES cipher: %v", err)
-		return ""
-	}
-	
-	// 6. Use zero IV for decryption (matches Delphi implementation)
-	iv := make([]byte, aes.BlockSize)
-	
-	// 7. Decrypt using CBC mode
-	plaintext := make([]byte, len(decoded))
+	// Decrypt
+	plaintext := make([]byte, len(ciphertext))
 	mode := cipher.NewCBCDecrypter(block, iv)
-	mode.CryptBlocks(plaintext, decoded)
+	mode.CryptBlocks(plaintext, ciphertext)
 	
-	// Log the first few bytes of decrypted data for debugging
-	if len(plaintext) > 16 {
-		log.Printf("First 16 bytes of decrypted data: %x", plaintext[:16])
+	log.Printf("Decrypted data (%d bytes): %x", len(plaintext), plaintext[:min(16, len(plaintext))])
+	
+	// 5. Unpad - PKCS#7
+	if len(plaintext) == 0 {
+		return "", fmt.Errorf("decrypted data is empty")
 	}
 	
-	// 8. Try different approaches to handle the decrypted data
+	paddingLen := int(plaintext[len(plaintext)-1])
+	if paddingLen <= 0 || paddingLen > aes.BlockSize {
+		return "", fmt.Errorf("invalid padding length: %d", paddingLen)
+	}
 	
-	// First try: Assume data is zlib compressed with padding
-	if len(plaintext) > 0 {
-		// Try to remove PKCS#7 padding first
-		lastByte := plaintext[len(plaintext)-1]
-		if int(lastByte) <= aes.BlockSize && int(lastByte) > 0 {
-			// Check if it looks like valid padding
-			validPadding := true
-			for i := len(plaintext) - int(lastByte); i < len(plaintext); i++ {
-				if plaintext[i] != lastByte {
-					validPadding = false
-					break
-				}
-			}
-			
-			if validPadding {
-				log.Printf("Removing %d bytes of padding", int(lastByte))
-				plaintext = plaintext[:len(plaintext)-int(lastByte)]
-			}
-		}
-		
-		// Try to decompress with zlib
-		zlibReader, err := zlib.NewReader(bytes.NewReader(plaintext))
-		if err == nil {
-			log.Printf("zlib header detected, decompressing...")
-			decompressed, err := io.ReadAll(zlibReader)
-			zlibReader.Close()
-			if err == nil {
-				log.Printf("Successfully decompressed %d bytes of data", len(decompressed))
-				return string(decompressed)
-			}
-			log.Printf("Error reading zlib data: %v", err)
-		} else {
-			log.Printf("Not zlib compressed or invalid zlib data: %v", err)
+	// Verify padding
+	for i := len(plaintext) - paddingLen; i < len(plaintext); i++ {
+		if plaintext[i] != byte(paddingLen) {
+			return "", fmt.Errorf("invalid padding at position %d: expected %d, got %d", 
+				i, paddingLen, plaintext[i])
 		}
 	}
 	
-	// Second try: Look for zlib header at different offsets
-	for offset := 0; offset < min(32, len(plaintext)); offset++ {
-		if offset+2 < len(plaintext) {
-			// Check for zlib header (common values: 0x78 0x01, 0x78 0x9C, 0x78 0xDA)
-			if plaintext[offset] == 0x78 && (plaintext[offset+1] == 0x01 || 
-				plaintext[offset+1] == 0x9C || plaintext[offset+1] == 0xDA) {
-				
-				log.Printf("Found potential zlib header at offset %d", offset)
-				zlibReader, err := zlib.NewReader(bytes.NewReader(plaintext[offset:]))
-				if err == nil {
-					decompressed, err := io.ReadAll(zlibReader)
-					zlibReader.Close()
-					if err == nil {
-						log.Printf("Successfully decompressed %d bytes starting at offset %d", 
-							len(decompressed), offset)
-						return string(decompressed)
-					}
-				}
-			}
-		}
+	unpadded := plaintext[:len(plaintext)-paddingLen]
+	log.Printf("Unpadded data (%d bytes), removed %d bytes of padding", 
+		len(unpadded), paddingLen)
+	
+	// 6. Decompress with zlib
+	zr, err := zlib.NewReader(bytes.NewReader(unpadded))
+	if err != nil {
+		return "", fmt.Errorf("failed to create zlib reader: %v", err)
+	}
+	defer zr.Close()
+	
+	decompressed, err := io.ReadAll(zr)
+	if err != nil {
+		return "", fmt.Errorf("failed to decompress data: %v", err)
 	}
 	
-	// Third try: Handle raw plaintext, which might be directly readable
-	// Remove any non-printable characters at the end
-	end := len(plaintext)
-	for i := len(plaintext) - 1; i >= 0; i-- {
-		if plaintext[i] < 32 || plaintext[i] > 126 {
-			end = i
-		} else {
-			break
-		}
-	}
+	log.Printf("Decompressed data (%d bytes): %s", len(decompressed), decompressed)
 	
-	if end > 0 {
-		log.Printf("Returning %d bytes of plaintext", end)
-		return string(plaintext[:end])
-	}
-	
-	// Last resort: return everything as a string
-	log.Printf("Returning full plaintext as last resort")
-	return string(plaintext)
+	return string(decompressed), nil
 }
 
 // PKCS7 Padding helper functions

@@ -141,7 +141,7 @@ class DataCompressor:
 
 def init_connection(host, port):
     """Initialize connection with the server"""
-    client_id = 3
+    client_id = 9  # Changed to 9 to test the problematic client ID
     hostname = "DEBUG-CLIENT"
     
     # Connect to server
@@ -211,42 +211,39 @@ def init_connection(host, port):
         logger.info(f"  dict_part: {dict_part}")
         logger.info(f"  host_part: {host_part}")
         
-        # Test encryption
+        # Create standard compressor with calculated key
         compressor = DataCompressor(crypto_key)
+        
+        # Also create a compressor with the hardcoded key for ID=9
+        hardcoded_key = "D5F22NE-"
+        hardcoded_compressor = DataCompressor(hardcoded_key)
+        logger.info(f"Created hardcoded compressor with key: {hardcoded_key}")
+        
+        # Test encryption with standard key
         test_string = "TT=Test"
         encrypted = compressor.compress_data(test_string)
         decrypted = compressor.decompress_data(encrypted)
         
         if decrypted == test_string:
-            logger.info("Encryption test successful!")
+            logger.info("Standard encryption test successful!")
         else:
-            logger.warning(f"Encryption test failed. Expected '{test_string}', got '{decrypted}'")
-            
-            # Try alternative keys
-            alt_keys = [
-                dict_part + server_key + host_part,
-                server_key + host_part + dict_part,
-                dict_part + host_part + server_key
-            ]
-            
-            for i, alt_key in enumerate(alt_keys):
-                logger.info(f"Testing alternative key {i+1}: {alt_key}")
-                alt_compressor = DataCompressor(alt_key)
-                alt_encrypted = alt_compressor.compress_data(test_string)
-                alt_decrypted = alt_compressor.decompress_data(alt_encrypted)
-                
-                if alt_decrypted == test_string:
-                    logger.info(f"Alternative key {i+1} works!")
-                    crypto_key = alt_key
-                    compressor = alt_compressor
-                    break
+            logger.warning(f"Standard encryption test failed. Expected '{test_string}', got '{decrypted}'")
         
-        # Send INFO command
+        # Test encryption with hardcoded key
+        hardcoded_encrypted = hardcoded_compressor.compress_data(test_string)
+        hardcoded_decrypted = hardcoded_compressor.decompress_data(hardcoded_encrypted)
+        
+        if hardcoded_decrypted == test_string:
+            logger.info("Hardcoded key encryption test successful!")
+        else:
+            logger.warning(f"Hardcoded key encryption test failed. Expected '{test_string}', got '{hardcoded_decrypted}'")
+        
+        # Send INFO command with the standard key first
         info_data = "ID=DebugClient\r\nTT=Test\r\nHOST=DEBUG-CLIENT"
         encrypted_info = compressor.compress_data(info_data)
         info_cmd = f"INFO DATA={encrypted_info}\r\n"
         
-        logger.info(f"Sending INFO command with data: {info_data}")
+        logger.info(f"Sending INFO command with standard key. Data: {info_data}")
         sock.sendall(info_cmd.encode('ascii'))
         
         # Wait for response
@@ -259,7 +256,7 @@ def init_connection(host, port):
             if b"\r\n\r\n" in data:  # End of response
                 break
         
-        logger.info(f"INFO Response: {response.decode('ascii', errors='replace')}")
+        logger.info(f"INFO Response (standard key): {response.decode('ascii', errors='replace')}")
         
         # Try to parse and decrypt the response
         if b"DATA=" in response:
@@ -267,12 +264,60 @@ def init_connection(host, port):
             encrypted_resp = response[data_start:].strip()
             
             try:
-                decrypted_resp = compressor.decompress_data(encrypted_resp.decode('ascii'))
-                logger.info(f"Decrypted INFO response: {decrypted_resp}")
+                # Try to decrypt with both keys
+                logger.info("Attempting to decrypt with standard key")
+                standard_decrypted = compressor.decompress_data(encrypted_resp.decode('ascii'))
+                logger.info(f"Decrypted INFO response (standard key): {standard_decrypted}")
             except Exception as e:
-                logger.error(f"Failed to decrypt INFO response: {e}")
+                logger.error(f"Failed to decrypt INFO response with standard key: {e}")
+                
+            try:
+                logger.info("Attempting to decrypt with hardcoded key")
+                hardcoded_decrypted = hardcoded_compressor.decompress_data(encrypted_resp.decode('ascii'))
+                logger.info(f"Decrypted INFO response (hardcoded key): {hardcoded_decrypted}")
+            except Exception as e:
+                logger.error(f"Failed to decrypt INFO response with hardcoded key: {e}")
         
-        return sock, compressor
+        # Now send another INFO command with the hardcoded key
+        encrypted_info_hardcoded = hardcoded_compressor.compress_data(info_data)
+        info_cmd_hardcoded = f"INFO DATA={encrypted_info_hardcoded}\r\n"
+        
+        logger.info(f"Sending INFO command with hardcoded key. Data: {info_data}")
+        sock.sendall(info_cmd_hardcoded.encode('ascii'))
+        
+        # Wait for response
+        response = b""
+        while True:
+            data = sock.recv(1024)
+            if not data:
+                break
+            response += data
+            if b"\r\n\r\n" in data:  # End of response
+                break
+        
+        logger.info(f"INFO Response (hardcoded key): {response.decode('ascii', errors='replace')}")
+        
+        # Try to parse and decrypt the response
+        if b"DATA=" in response:
+            data_start = response.find(b"DATA=") + 5
+            encrypted_resp = response[data_start:].strip()
+            
+            try:
+                # Try to decrypt with both keys
+                logger.info("Attempting to decrypt with standard key")
+                standard_decrypted = compressor.decompress_data(encrypted_resp.decode('ascii'))
+                logger.info(f"Decrypted INFO response (standard key): {standard_decrypted}")
+            except Exception as e:
+                logger.error(f"Failed to decrypt INFO response with standard key: {e}")
+                
+            try:
+                logger.info("Attempting to decrypt with hardcoded key")
+                hardcoded_decrypted = hardcoded_compressor.decompress_data(encrypted_resp.decode('ascii'))
+                logger.info(f"Decrypted INFO response (hardcoded key): {hardcoded_decrypted}")
+            except Exception as e:
+                logger.error(f"Failed to decrypt INFO response with hardcoded key: {e}")
+        
+        return sock, compressor, hardcoded_compressor
         
     except Exception as e:
         logger.error(f"Error processing INIT response: {e}", exc_info=True)
@@ -281,7 +326,7 @@ def init_connection(host, port):
 
 def main():
     """Main function"""
-    host = "localhost"
+    host = "127.0.0.1"  # Changed from localhost to explicit IP
     port = 8016
     
     if len(sys.argv) > 1:
@@ -294,11 +339,8 @@ def main():
     try:
         result = init_connection(host, port)
         if result:
-            sock, compressor = result
+            sock, compressor, hardcoded_compressor = result
             logger.info("Connection initialized successfully")
-            
-            # Run a few more tests if needed
-            # ...
             
             # Close the socket
             sock.close()
