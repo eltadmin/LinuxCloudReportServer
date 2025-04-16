@@ -4,16 +4,11 @@ Main entry point for the Linux Cloud Report Server.
 This module provides the main entry point for starting the server.
 """
 
-import asyncio
 import logging
-import os
-import signal
 import sys
 from pathlib import Path
 import argparse
 import logging.handlers
-
-from server import run_server
 
 # Configure logging with rotation
 def setup_logging():
@@ -67,9 +62,17 @@ def main():
     logger.info("Starting Linux Cloud Report Server...")
     logger.info(f"Host: {args.host}, Port: {args.port}, Log level: {args.log_level}")
     
-    # Run the server
+    # Import here to avoid circular imports
+    from server.server import ServerRunner
+    
+    # Create and run the server
+    runner = ServerRunner(args.host, args.port)
+    
     try:
-        run_server(args.host, args.port)
+        # Run the server
+        import asyncio
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(runner.run())
     except KeyboardInterrupt:
         logger.info("Server shutdown requested by keyboard interrupt")
     except Exception as e:
