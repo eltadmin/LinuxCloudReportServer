@@ -11,6 +11,8 @@ services:
       - TCP_HOST=0.0.0.0
       - TCP_PORT=8016
       - SERVER_DEBUG=true  # Added for debugging
+    volumes:
+      - ./keys:/app/keys  # Volume for storing server keys
     depends_on:
       db:
         condition: service_healthy

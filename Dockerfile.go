@@ -13,6 +13,9 @@ FROM alpine:latest
 
 WORKDIR /app
 
+# Create directory for key storage
+RUN mkdir -p /app && chmod 755 /app
+
 # Copy the binary from the builder stage
 COPY --from=builder /app/tcp_server .
 

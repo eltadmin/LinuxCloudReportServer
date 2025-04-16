@@ -25,8 +25,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,6 +44,9 @@ const (
 	KEY_LENGTH           = 4      // 4 characters like in logs
 	CONNECTION_TIMEOUT   = 300    // 5 minutes
 	INACTIVITY_CHECK_INT = 60     // 1 minute
+	KEY_FILE           = "/app/keys/server.key"   // Path to store the server key in mounted volume
+	KEY_ENV_VAR        = "SERVER_KEY"        // Environment variable name for server key
+	DEFAULT_SERVER_KEY = "D5F2"              // Default key prefix if no key is found
 )
 
 // Command constants
@@ -462,10 +467,15 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	dictIndex := idIndex - 1
 	dictEntry := CRYPTO_DICTIONARY[dictIndex]
 	
-	// Generate a server key (always use D5F2 for compatibility with original server)
-	serverKey := "D5F2"
-	if DEBUG_MODE && USE_FIXED_DEBUG_KEY {
-		serverKey = DEBUG_SERVER_KEY
+	// Generate a server key from the auto-generated or loaded key
+	serverKey := DEBUG_SERVER_KEY
+	if !DEBUG_MODE || !USE_FIXED_DEBUG_KEY {
+		// Use the first 4 characters of the auto-generated key
+		if len(DEBUG_SERVER_KEY) >= 4 {
+			serverKey = DEBUG_SERVER_KEY[:4]
+		} else {
+			serverKey = DEBUG_SERVER_KEY
+		}
 	}
 	
 	// Set length value based on client ID
@@ -1063,6 +1073,81 @@ func validateEncryption(key string) bool {
 	}
 }
 
+// Auto-generate server key if not provided
+func generateServerKeyIfNeeded() string {
+	// First check if key exists in environment variable
+	envKey := os.Getenv(KEY_ENV_VAR)
+	if envKey != "" {
+		log.Printf("Using server key from environment variable: %s", envKey)
+		return envKey
+	}
+	
+	// Create directory for key if it doesn't exist
+	keyDir := filepath.Dir(KEY_FILE)
+	if _, err := os.Stat(keyDir); os.IsNotExist(err) {
+		log.Printf("Creating key directory: %s", keyDir)
+		if err := os.MkdirAll(keyDir, 0755); err != nil {
+			log.Printf("Warning: Failed to create key directory: %v", err)
+		}
+	}
+	
+	// Next, check if key exists in file
+	if _, err := os.Stat(KEY_FILE); err == nil {
+		// Key file exists
+		keyBytes, err := os.ReadFile(KEY_FILE)
+		if err == nil && len(keyBytes) > 0 {
+			key := strings.TrimSpace(string(keyBytes))
+			log.Printf("Using server key from file: %s", key)
+			return key
+		} else {
+			log.Printf("Error reading key file: %v", err)
+		}
+	}
+	
+	// No key found, generate a new one
+	log.Printf("No existing server key found, generating new key")
+	key := generateServerKey()
+	
+	// Save the key to file for future use
+	err := os.WriteFile(KEY_FILE, []byte(key), 0644)
+	if err != nil {
+		log.Printf("Warning: Failed to save server key to file: %v", err)
+	} else {
+		log.Printf("Generated and saved new server key to file: %s", KEY_FILE)
+	}
+	
+	return key
+}
+
+// Generate a new server key (similar to ServerKeyGen)
+func generateServerKey() string {
+	// Create a key with structure similar to the original keys
+	// We'll use a more sophisticated pattern but still keep it compatible
+	
+	// Options for each position
+	prefixes := []string{"D5", "F1", "E7", "C8"}
+	suffixes := []string{"F2", "B4", "A3", "G6"}
+	
+	// Pick random elements or use D5F2 by default
+	if DEBUG_MODE && USE_FIXED_DEBUG_KEY {
+		return DEFAULT_SERVER_KEY
+	}
+	
+	// Generate random elements
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	prefix := prefixes[r.Intn(len(prefixes))]
+	suffix := suffixes[r.Intn(len(suffixes))]
+	
+	// Combine to form the key
+	key := prefix + suffix
+	
+	// For compatibility, can also just use D5F2 which is known to work
+	// key := "D5F2"
+	
+	log.Printf("Generated server key: %s", key)
+	return key
+}
+
 func main() {
 	// Read environment variables or use defaults
 	host := getEnv("TCP_HOST", "0.0.0.0")
@@ -1072,9 +1157,14 @@ func main() {
 		log.Fatalf("Invalid port number: %s", portStr)
 	}
 	
+	// Generate or load the server key
+	serverKey := generateServerKeyIfNeeded()
+	DEBUG_SERVER_KEY = serverKey
+	
 	// Log startup information
 	log.Printf("Starting IMPROVED Go TCP server on %s:%d", host, port)
 	log.Printf("Debug mode: %v", DEBUG_MODE)
+	log.Printf("Server key: %s", serverKey)
 	
 	// Print key fixes
 	log.Printf("Key fixes implemented:")
@@ -1085,6 +1175,7 @@ func main() {
 	log.Printf("5. Base64 Handling - Improved padding handling")
 	log.Printf("6. Enhanced Logging - Added detailed logging for debugging")
 	log.Printf("7. Validation - Added encryption validation testing")
+	log.Printf("8. Auto Key Generation - Added automatic server key generation")
 	
 	// Create and start the TCP server
 	server := NewTCPServer()
