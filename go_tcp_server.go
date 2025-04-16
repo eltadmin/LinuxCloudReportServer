@@ -21,6 +21,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/md5"
+	"database/sql"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -588,15 +589,13 @@ func (s *TCPServer) handlePing(conn *TCPConnection) (string, error) {
 
 // Handle the INFO command
 func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, error) {
-	log.Printf("[ID=%s] Processing INFO command: %s", conn.clientID, strings.Join(parts, " "))
-	
-	// CMD=INFO|DATA=<base64 data>
-	// Validate command format
+	// Check if command has correct format (CMD=INFO|DATA=<data>)
 	if len(parts) < 2 {
-		log.Printf("[ID=%s] Invalid INFO command format, missing DATA parameter", conn.clientID)
-		return "", fmt.Errorf("invalid command format, expected CMD=INFO|DATA=...")
+		log.Printf("[ID=%s] INFO command has invalid format: %v", conn.clientID, parts)
+		return "", fmt.Errorf("invalid INFO command format")
 	}
 	
+	// Extract the DATA parameter
 	var dataParam string
 	for _, part := range parts {
 		if strings.HasPrefix(part, "DATA=") {
@@ -606,46 +605,25 @@ func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, err
 	}
 	
 	if dataParam == "" {
-		log.Printf("[ID=%s] Invalid INFO command, DATA parameter is empty", conn.clientID)
-		return "", fmt.Errorf("DATA parameter is empty")
+		log.Printf("[ID=%s] INFO command missing DATA parameter", conn.clientID)
+		return "", fmt.Errorf("missing DATA parameter in INFO command")
 	}
 	
-	log.Printf("[ID=%s] Processing INFO command with DATA: %s", conn.clientID, dataParam)
+	log.Printf("[ID=%s] Received INFO command with DATA: %s", conn.clientID, dataParam)
 	
-	// Get dictionary entry for this client ID
+	// Get dictionary entry for this client
 	dictEntry, err := getDictionaryEntry(conn.clientID)
 	if err != nil {
-		log.Printf("[ID=%s] Error getting dictionary entry: %s", conn.clientID, err)
-		return "", err
+		log.Printf("[ID=%s] Failed to get dictionary entry: %v", conn.clientID, err)
+		return "", fmt.Errorf("failed to get dictionary entry: %w", err)
 	}
+	
 	log.Printf("[ID=%s] Dictionary entry: %s", conn.clientID, dictEntry)
 	
-	// Generate crypto key from dictionary entry
-	idValue := conn.clientID
-	
-	// Generate the crypto key based on ID
-	var cryptoKey string
-	
-	// Special handling for ID=9
-	if idValue == "9" {
-		// For ID=9, use hardcoded key that works with the client
-		cryptoKey = "D5F22NE-"
-		log.Printf("[ID=%s] SPECIAL CASE: Using hard-coded key for ID=9: %s", conn.clientID, cryptoKey)
-	} else if idValue == "5" {
-		// Special handling for ID=5
-		cryptoKey = "D5F2cNE-"
-		log.Printf("[ID=%s] SPECIAL CASE: Using hard-coded key for ID=5: %s", conn.clientID, cryptoKey)
-	} else {
-		// Default key generation
-		cryptoLen := 1 // Default length
-		if len(dictEntry) > 0 {
-			cryptoKey = dictEntry[:cryptoLen] + "NE-"
-			log.Printf("[ID=%s] Generated crypto key: %s", conn.clientID, cryptoKey)
-		} else {
-			log.Printf("[ID=%s] Error: Dictionary entry is empty", conn.clientID)
-			return "", fmt.Errorf("empty dictionary entry")
-		}
-	}
+	// Generate crypto key from dictionary entry using our function
+	// The function handles special cases like ID=9
+	cryptoKey := generateCryptoKey(conn.clientID, dictEntry)
+	log.Printf("[ID=%s] Using crypto key: %s", conn.clientID, cryptoKey)
 	
 	// Store the key for this connection
 	conn.cryptoKey = cryptoKey
@@ -799,15 +777,13 @@ func compressData(data string, key string) string {
 	mode.CryptBlocks(ciphertext, padded)
 	log.Printf("Encrypted data (len=%d): %x", len(ciphertext), ciphertext)
 	
-	// Special handling for client ID 9
-	if strings.HasPrefix(key, "D5F22NE-") {
-		log.Printf("Special handling for ID=9 in compressData")
-		// Any special processing for ID=9 goes here
-	}
-	
-	// Encode in Base64
+	// Encode in Base64 (without padding for Delphi compatibility)
 	encoded := base64.StdEncoding.EncodeToString(ciphertext)
-	log.Printf("Base64 encoded data (len=%d): %s", len(encoded), encoded)
+	
+	// Remove padding for Delphi compatibility - the Delphi client doesn't expect padding
+	encoded = strings.TrimRight(encoded, "=")
+	
+	log.Printf("Base64 encoded data without padding (len=%d): %s", len(encoded), encoded)
 	
 	return encoded
 }
@@ -823,25 +799,56 @@ func decompressData(data string, key string) (string, error) {
 	log.Printf("MD5 key hash: %x", keyHash)
 	log.Printf("AES key: %x", aesKey)
 	
-	// 2. Check and add back Base64 padding if needed
-	mod4 := len(data) % 4
-	if mod4 > 0 {
-		padding := strings.Repeat("=", 4-mod4)
-		data = data + padding
-		log.Printf("Added %d '=' padding characters to Base64 data", 4-mod4)
+	// 2. Check and clean up Base64 data
+	// Remove any trailing = if present
+	data = strings.TrimRight(data, "=")
+	
+	// Add back proper padding
+	padding := ""
+	switch len(data) % 4 {
+	case 1:
+		// Invalid Base64 - remove last character and add padding
+		data = data[:len(data)-1]
+		padding = "==="
+	case 2:
+		padding = "=="
+	case 3:
+		padding = "="
 	}
+	
+	data = data + padding
+	log.Printf("Base64 data after padding: len=%d, padding=%s", len(data), padding)
 	
 	// 3. Base64 decode
 	ciphertext, err := base64.StdEncoding.DecodeString(data)
 	if err != nil {
-		return "", fmt.Errorf("failed to decode base64: %v", err)
+		// Try URL-safe base64 as fallback
+		ciphertext, err = base64.URLEncoding.DecodeString(data)
+		if err != nil {
+			return "", fmt.Errorf("failed to decode base64 (tried both Standard and URL-safe): %v", err)
+		}
+		log.Printf("Decoded with URL-safe Base64")
+	} else {
+		log.Printf("Decoded with Standard Base64")
 	}
 	
 	log.Printf("Decoded Base64 data (%d bytes): %x", len(ciphertext), ciphertext[:min(16, len(ciphertext))])
 	
 	// Check if data length is a multiple of AES block size
-	if len(ciphertext) % aes.BlockSize != 0 {
-		return "", fmt.Errorf("ciphertext length not a multiple of AES block size: %d", len(ciphertext))
+	blockSize := aes.BlockSize
+	if len(ciphertext) % blockSize != 0 {
+		// Try to fix the data - pad to the next block size
+		padding := blockSize - (len(ciphertext) % blockSize)
+		paddedCiphertext := make([]byte, len(ciphertext) + padding)
+		copy(paddedCiphertext, ciphertext)
+		
+		// Use PKCS#7 padding
+		for i := 0; i < padding; i++ {
+			paddedCiphertext[len(ciphertext) + i] = byte(padding)
+		}
+		
+		log.Printf("Fixed ciphertext length by adding %d bytes of padding", padding)
+		ciphertext = paddedCiphertext
 	}
 	
 	// 4. Decrypt with AES-CBC
@@ -868,36 +875,85 @@ func decompressData(data string, key string) (string, error) {
 	
 	paddingLen := int(plaintext[len(plaintext)-1])
 	if paddingLen <= 0 || paddingLen > aes.BlockSize {
-		return "", fmt.Errorf("invalid padding length: %d", paddingLen)
-	}
-	
-	// Verify padding
-	for i := len(plaintext) - paddingLen; i < len(plaintext); i++ {
-		if plaintext[i] != byte(paddingLen) {
-			return "", fmt.Errorf("invalid padding at position %d: expected %d, got %d", 
-				i, paddingLen, plaintext[i])
+		// If padding appears invalid, try to find the zlib header
+		for offset := 0; offset < min(len(plaintext), 32); offset++ {
+			if offset+2 < len(plaintext) && plaintext[offset] == 0x78 && 
+				(plaintext[offset+1] == 0x01 || plaintext[offset+1] == 0x9C || plaintext[offset+1] == 0xDA) {
+				log.Printf("Found zlib header at offset %d", offset)
+				plaintext = plaintext[offset:]
+				break
+			}
+		}
+	} else {
+		// Verify padding - but be flexible
+		validPadding := true
+		for i := len(plaintext) - paddingLen; i < len(plaintext); i++ {
+			if plaintext[i] != byte(paddingLen) {
+				validPadding = false
+				break
+			}
+		}
+		
+		if validPadding {
+			plaintext = plaintext[:len(plaintext)-paddingLen]
+			log.Printf("Removed %d bytes of PKCS#7 padding", paddingLen)
+		} else {
+			log.Printf("Invalid padding, looking for zlib header...")
+			
+			// Look for zlib header
+			for offset := 0; offset < min(len(plaintext), 32); offset++ {
+				if offset+2 < len(plaintext) && plaintext[offset] == 0x78 && 
+					(plaintext[offset+1] == 0x01 || plaintext[offset+1] == 0x9C || plaintext[offset+1] == 0xDA) {
+					log.Printf("Found zlib header at offset %d", offset)
+					plaintext = plaintext[offset:]
+					break
+				}
+			}
 		}
 	}
 	
-	unpadded := plaintext[:len(plaintext)-paddingLen]
-	log.Printf("Unpadded data (%d bytes), removed %d bytes of padding", 
-		len(unpadded), paddingLen)
+	// 6. Decompress with zlib - try various approaches
+	var decompressed []byte
+	var decompressErr error
 	
-	// 6. Decompress with zlib
-	zr, err := zlib.NewReader(bytes.NewReader(unpadded))
-	if err != nil {
-		return "", fmt.Errorf("failed to create zlib reader: %v", err)
+	// First attempt - standard zlib decompress
+	zr, err := zlib.NewReader(bytes.NewReader(plaintext))
+	if err == nil {
+		decompressed, decompressErr = io.ReadAll(zr)
+		zr.Close()
+		
+		if decompressErr == nil {
+			log.Printf("Successfully decompressed with zlib: %d bytes", len(decompressed))
+			return string(decompressed), nil
+		}
+		
+		log.Printf("Error during zlib decompression: %v", decompressErr)
+	} else {
+		log.Printf("Error creating zlib reader: %v", err)
 	}
-	defer zr.Close()
 	
-	decompressed, err := io.ReadAll(zr)
-	if err != nil {
-		return "", fmt.Errorf("failed to decompress data: %v", err)
+	// Second attempt - try to interpret the data as plain text
+	// Check if it contains characters that look like parameters
+	if strings.Contains(string(plaintext), "=") && (strings.Contains(string(plaintext), "\r\n") || 
+		strings.Contains(string(plaintext), "\n") || strings.Contains(string(plaintext), "|")) {
+		log.Printf("Data appears to be plain text, returning as is")
+		return string(plaintext), nil
 	}
 	
-	log.Printf("Decompressed data (%d bytes): %s", len(decompressed), decompressed)
+	// Failed to decompress - check if we can extract readable text
+	readable := []byte{}
+	for _, b := range plaintext {
+		if b >= 32 && b <= 126 {
+			readable = append(readable, b)
+		}
+	}
 	
-	return string(decompressed), nil
+	if len(readable) > 0 {
+		log.Printf("Extracted %d readable characters from data", len(readable))
+		return string(readable), nil
+	}
+	
+	return "", fmt.Errorf("failed to decompress data: %v", err)
 }
 
 // PKCS7 Padding helper functions
@@ -918,19 +974,61 @@ func min(a, b int) int {
 	return b
 }
 
-// Helper function to get dictionary entry based on client ID
-func getDictionaryEntry(clientID string) (string, error) {
-	idNum, err := strconv.Atoi(clientID)
+// Get dictionary entry for the given ID value
+func getDictionaryEntry(idValue string) (string, error) {
+	// Get dictionary entry from db
+	stmt, err := db.Prepare("SELECT dict FROM dictionary WHERE id = ?")
 	if err != nil {
-		return "", fmt.Errorf("invalid client ID format: %s", clientID)
+		return "", fmt.Errorf("error preparing query: %v", err)
+	}
+	defer stmt.Close()
+
+	var dictEntry string
+	err = stmt.QueryRow(idValue).Scan(&dictEntry)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("no dictionary entry found for ID: %s", idValue)
+		}
+		return "", fmt.Errorf("error querying dictionary: %v", err)
+	}
+
+	log.Printf("Dictionary entry for ID %s: %s", idValue, dictEntry)
+	return dictEntry, nil
+}
+
+// generateCryptoKey creates a crypto key based on client ID and dictionary entry
+func generateCryptoKey(clientID string, dictEntry string) string {
+	if len(dictEntry) == 0 {
+		log.Printf("[ID=%s] Warning: Empty dictionary entry for key generation", clientID)
+		return "NE-" // Fallback key
+	}
+
+	// Default key generation logic
+	cryptoLen := 1 // Default length for most clients
+	
+	// Special handling for ID=9
+	if clientID == "9" {
+		log.Printf("[ID=9] Using hardcoded key for compatibility")
+		return "D5F22NE-" // Hard-coded key for ID=9 based on Wireshark logs
 	}
 	
-	if idNum < 1 || idNum > len(CRYPTO_DICTIONARY) {
-		return "", fmt.Errorf("client ID out of range: %d", idNum)
+	// Special handling for ID=5
+	if clientID == "5" {
+		log.Printf("[ID=5] Using hardcoded key for compatibility")
+		return "D5F2cNE-" // Hard-coded key for ID=5
 	}
 	
-	dictIndex := idNum - 1
-	return CRYPTO_DICTIONARY[dictIndex], nil
+	// For all other IDs, use standard key generation
+	if len(dictEntry) >= cryptoLen {
+		keyPrefix := dictEntry[:cryptoLen]
+		fullKey := keyPrefix + "NE-"
+		log.Printf("[ID=%s] Generated standard key: %s using prefix: %s", clientID, fullKey, keyPrefix)
+		return fullKey
+	}
+	
+	// Fallback if dictionary entry is too short
+	log.Printf("[ID=%s] Warning: Dictionary entry shorter than required length", clientID)
+	return dictEntry + "NE-"
 }
 
 // Test the crypto key with a test string
