@@ -458,8 +458,11 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 		idValue, hostVal, dateVal, timeVal, appTypeVal, appVerVal)
 	
 	// Get the crypto dictionary entry
-	dictIndex := idIndex - 1
-	dictEntry := CRYPTO_DICTIONARY[dictIndex]
+	dictEntry, err := getDictionaryEntry(idValue)
+	if err != nil {
+		log.Printf("Error getting dictionary entry: %v", err)
+		return "ERROR Invalid client ID", nil
+	}
 	
 	// Generate a server key (always use D5F2 for compatibility with original server)
 	serverKey := "D5F2"
@@ -536,7 +539,7 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	
 	// Log key details for debugging
 	log.Printf("======= INIT Response Details =======")
-	log.Printf("Dictionary Entry [%d]: '%s', Using Part: '%s'", dictIndex, dictEntry, dictEntryPart)
+	log.Printf("Dictionary Entry: '%s', Using Part: '%s'", dictEntry, dictEntryPart)
 	log.Printf("Server Key: '%s', Len: %d", serverKey, lenValue)
 	log.Printf("Host parts: First='%s', Last='%s'", hostFirstChars, hostLastChar)
 	log.Printf("Final Crypto Key: '%s'", conn.cryptoKey)
@@ -915,6 +918,21 @@ func min(a, b int) int {
 	return b
 }
 
+// Helper function to get dictionary entry based on client ID
+func getDictionaryEntry(clientID string) (string, error) {
+	idNum, err := strconv.Atoi(clientID)
+	if err != nil {
+		return "", fmt.Errorf("invalid client ID format: %s", clientID)
+	}
+	
+	if idNum < 1 || idNum > len(CRYPTO_DICTIONARY) {
+		return "", fmt.Errorf("client ID out of range: %d", idNum)
+	}
+	
+	dictIndex := idNum - 1
+	return CRYPTO_DICTIONARY[dictIndex], nil
+}
+
 // Test the crypto key with a test string
 func validateEncryption(key string) bool {
 	log.Printf("Validating encryption with key: %s", key)
@@ -931,9 +949,9 @@ func validateEncryption(key string) bool {
 	}
 	
 	// Декриптираме криптирания текст
-	decrypted := decompressData(encrypted, key)
-	if decrypted == "" {
-		log.Printf("Failed to decrypt test string")
+	decrypted, err := decompressData(encrypted, key)
+	if err != nil {
+		log.Printf("Failed to decrypt test string: %v", err)
 		return false
 	}
 	
