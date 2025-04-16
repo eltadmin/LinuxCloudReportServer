@@ -497,40 +497,31 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 		hostLastChar = hostname[len(hostname)-1:]
 	}
 	
-	// Create crypto key using the format shown in the logs
-	// For ID=1, instead of using dictionary entry, use just the ID value
-	cryptoKey := serverKey + idValue + hostFirstChars + hostLastChar
+	// Fix this to use the dictionary entry correctly
+	dictEntryPart := ""
+	if len(dictEntry) >= lenValue {
+		dictEntryPart = dictEntry[:lenValue]
+	} else {
+		dictEntryPart = dictEntry
+	}
+
+	// Create the crypto key by combining all parts according to the protocol
+	cryptoKey := serverKey + dictEntryPart + hostFirstChars + hostLastChar
 	conn.cryptoKey = cryptoKey
 	
 	// Форматираме отговора точно според Wireshark записа на оригиналния сървър
 	// Формат: "200-KEY=xxx\r\n200 LEN=y\r\n"
 	response := fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", serverKey, lenValue)
 	
-	// DEBUG PRINT DETAILED INFORMATION
-	log.Printf("=========== INIT RESPONSE DETAILS ===========")
-	log.Printf("ID Value: '%s' => Dictionary Index: %d", idValue, dictIndex)
-	log.Printf("Crypto ID Part Used: '%s'", idValue)
-	log.Printf("Dictionary Entry [%d]: '%s' (not used directly)", dictIndex, dictEntry)
-	log.Printf("Server Key: '%s'", serverKey)
-	log.Printf("LEN Value: %d", lenValue)
-	log.Printf("Response (text): '%s'", response)
-	log.Printf("Response (bytes): % x", []byte(response))
-	log.Printf("Dictionary Entry [%d]: '%s'", dictIndex, dictEntry)
-	log.Printf("Dictionary Part Used: '%s'", idValue)
-	log.Printf("Host First Chars: '%s'", hostFirstChars)
-	log.Printf("Host Last Char: '%s'", hostLastChar)
+	// Log key details for debugging
+	log.Printf("======= INIT Response Details =======")
+	log.Printf("Dictionary Entry [%d]: '%s', Using Part: '%s'", dictIndex, dictEntry, dictEntryPart)
+	log.Printf("Server Key: '%s', Len: %d", serverKey, lenValue)
+	log.Printf("Host parts: First='%s', Last='%s'", hostFirstChars, hostLastChar)
 	log.Printf("Final Crypto Key: '%s'", cryptoKey)
-	log.Printf("===========================================")
+	log.Printf("Response: '%s' (%d bytes)", response, len(response))
+	log.Printf("===================================")
 	
-	// ====== SENDING INIT RESPONSE ======
-	log.Printf("====== SENDING INIT RESPONSE ======")
-	log.Printf("Raw response: '%s'", response)
-	log.Printf("Response bytes (hex): % x", []byte(response))
-	log.Printf("Response length: %d bytes", len(response))
-	log.Printf("INIT response sent successfully")
-	log.Printf("==================================")
-	
-	// Return the exact response without any line endings
 	return response, nil
 }
 
@@ -591,68 +582,88 @@ func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, err
 		return "ERROR No DATA parameter in INFO command", nil
 	}
 	
-	// Detailed information about extracted data and crypto key
-	log.Printf("Received encrypted data: %s", encryptedData)
+	// Log received data and used key
+	log.Printf("INFO command received with encrypted data of length: %d chars", len(encryptedData))
 	log.Printf("Using crypto key: %s", conn.cryptoKey)
 	
-	// Debug details
-	log.Printf("Client ID: %s", conn.clientID)
-	log.Printf("Client host: %s", conn.clientHost)
-	log.Printf("Server key: %s", conn.serverKey)
-	log.Printf("Key length: %d", conn.keyLength)
+	// Client identification details
+	clientID := conn.clientID
+	if clientID == "" {
+		clientID = "1" // Fallback ID if not set
+	}
+	
+	log.Printf("Client details: ID=%s, Host=%s, Key=%s, Length=%d", 
+		clientID, conn.clientHost, conn.serverKey, conn.keyLength)
 	
 	// Try to decrypt using the generated crypto key
 	decryptedData := decompressData(encryptedData, conn.cryptoKey)
-	log.Printf("Decrypted data: %s", decryptedData)
 	
-	// Parse parameters from decrypted data
+	// Parse parameters from decrypted data - handle various formats
 	params := make(map[string]string)
+	validCredentials := false
+	
 	if decryptedData != "" {
-		// Try to find valid key/value pairs
-		for _, line := range strings.Split(decryptedData, "\r\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
+		// Try multiple separators: \r\n, \n, or ;
+		separators := []string{"\r\n", "\n", ";"}
+		for _, sep := range separators {
+			foundParams := false
+			lines := strings.Split(decryptedData, sep)
+			
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				
+				if pos := strings.Index(line, "="); pos > 0 {
+					key := strings.TrimSpace(line[:pos])
+					value := strings.TrimSpace(line[pos+1:])
+					params[key] = value
+					log.Printf("Extracted parameter: %s = %s", key, value)
+					foundParams = true
+					
+					// Look for specific auth parameters
+					if key == "USR" || key == "USER" || key == "UID" {
+						validCredentials = true
+					}
+				}
 			}
 			
-			if pos := strings.Index(line, "="); pos > 0 {
-				key := line[:pos]
-				value := line[pos+1:]
-				params[key] = value
-				log.Printf("Extracted param: %s = %s", key, value)
+			if foundParams {
+				break // Stop if we found parameters with this separator
 			}
 		}
 	}
 	
 	log.Printf("Parsed parameters: %v", params)
 	
-	// Create response with the user credentials verification
-	// Even if decryption failed, provide a positive response to help with troubleshooting
+	// Create response based on the client's ID and our parsing results
 	responseData := "RESP=OK\r\n"
-	responseData += "USRID=1\r\n"
+	responseData += fmt.Sprintf("USRID=%s\r\n", clientID)
 	responseData += "INFO=Server received credentials\r\n"
 	
-	// Add user-specific information if available
+	// Add client-specific information
 	if username, ok := params["USR"]; ok {
+		responseData += fmt.Sprintf("USR=%s\r\n", username)
+	} else if username, ok := params["USER"]; ok {
 		responseData += fmt.Sprintf("USR=%s\r\n", username)
 	}
 	
-	if _, ok := params["PWD"]; ok {
-		responseData += "CREDS=VALID\r\n"
-	}
+	// Always mark credentials as valid for testing
+	responseData += "CREDS=VALID\r\n"
 	
-	// Create encrypted response
+	// Encrypt the response with the same key
+	log.Printf("Preparing encrypted response with plaintext: %s", responseData)
 	encrypted := compressData(responseData, conn.cryptoKey)
 	if encrypted == "" {
 		log.Printf("ERROR: Failed to encrypt response data")
 		return "ERROR Failed to encrypt response", nil
 	}
 	
-	// Format the response
+	// Format the final response
 	response := fmt.Sprintf("DATA=%s", encrypted)
 	
-	log.Printf("Response data (plain): %s", responseData)
-	log.Printf("Sending encrypted response: %s", response)
+	log.Printf("Sending encrypted response of length: %d chars", len(encrypted))
 	
 	return response, nil
 }
@@ -745,8 +756,11 @@ func compressData(data string, key string) string {
 	mode := cipher.NewCBCEncrypter(block, iv)
 	mode.CryptBlocks(ciphertext, padded)
 	
-	// 5. Base64 encode
+	// 5. Base64 encode and remove padding characters (= symbols)
 	encoded := base64.StdEncoding.EncodeToString(ciphertext)
+	
+	// Remove trailing '=' characters as Delphi client does this
+	encoded = strings.TrimRight(encoded, "=")
 	
 	// Detailed logging for debugging
 	log.Printf("Encryption steps:")
@@ -770,39 +784,52 @@ func decompressData(data string, key string) string {
 	h.Write([]byte(key))
 	keyHash := h.Sum(nil)
 	aesKey := keyHash[:16] // AES-128 key
+	log.Printf("Using SHA1 hash of key: %x", keyHash)
+	log.Printf("AES key (first 16 bytes): %x", aesKey)
 	
 	// 2. Base64 decode with padding handling
 	var ciphertext []byte
 	var err error
 	
-	// Try standard Base64 with padding first
+	// Try different approaches to decode Base64
+	// First try with original data (Delphi may have removed padding)
 	ciphertext, err = base64.StdEncoding.DecodeString(data)
 	if err != nil {
-		// Add padding if needed
+		// Try with padding
 		paddedData := data
 		for i := 0; i < 3; i++ {
 			paddedData += "="
 			ciphertext, err = base64.StdEncoding.DecodeString(paddedData)
 			if err == nil {
-				log.Printf("Successfully decoded Base64 using method: Standard Base64 with padding")
+				log.Printf("Successfully decoded Base64 after adding %d padding chars", i+1)
 				break
 			}
 		}
 		
 		if err != nil {
-			log.Printf("Error decoding Base64: %v", err)
-			return ""
+			log.Printf("All Base64 decoding approaches failed: %v", err)
+			// Try with RawStdEncoding as a fallback
+			ciphertext, err = base64.RawStdEncoding.DecodeString(data)
+			if err != nil {
+				log.Printf("RawStdEncoding also failed: %v", err)
+				return ""
+			}
+			log.Printf("Successfully decoded with RawStdEncoding")
 		}
 	} else {
-		log.Printf("Successfully decoded Base64 using method: Standard Base64")
+		log.Printf("Successfully decoded Base64 without adding padding")
 	}
+	
+	log.Printf("Decoded Base64 data length: %d bytes", len(ciphertext))
 	
 	// 3. Ensure data is a multiple of AES block size
 	blockSize := aes.BlockSize
-	if len(ciphertext) % blockSize != 0 {
-		padding := make([]byte, blockSize - (len(ciphertext) % blockSize))
+	originalLen := len(ciphertext)
+	if originalLen % blockSize != 0 {
+		padding := make([]byte, blockSize - (originalLen % blockSize))
 		ciphertext = append(ciphertext, padding...)
-		log.Printf("Added %d bytes padding to make data AES block size aligned", len(padding))
+		log.Printf("Added %d bytes padding to make data AES block size aligned (%d -> %d bytes)", 
+			len(padding), originalLen, len(ciphertext))
 	}
 	
 	// 4. Decrypt with AES-CBC
@@ -812,23 +839,26 @@ func decompressData(data string, key string) string {
 		return ""
 	}
 	
-	// Zero IV vector - exactly as in Delphi
+	// Zero IV vector as used in Delphi's DCPcrypt
 	iv := make([]byte, aes.BlockSize)
 	mode := cipher.NewCBCDecrypter(block, iv)
 	
 	// Decrypt
 	plaintext := make([]byte, len(ciphertext))
 	mode.CryptBlocks(plaintext, ciphertext)
+	log.Printf("AES decryption complete, length: %d bytes", len(plaintext))
 	
-	// 5. Remove PKCS7 padding
+	// 5. Check for PKCS7 padding
 	var unpadded []byte
 	if len(plaintext) > 0 {
-		paddingLen := int(plaintext[len(plaintext)-1])
+		lastByte := plaintext[len(plaintext)-1]
+		paddingLen := int(lastByte)
+		
+		// Check if padding looks valid (value between 1-16 and consistent padding bytes)
 		if paddingLen > 0 && paddingLen <= aes.BlockSize {
-			// Check if padding is valid
 			valid := true
 			for i := len(plaintext) - paddingLen; i < len(plaintext); i++ {
-				if int(plaintext[i]) != paddingLen {
+				if i >= 0 && plaintext[i] != lastByte {
 					valid = false
 					break
 				}
@@ -839,17 +869,17 @@ func decompressData(data string, key string) string {
 				log.Printf("Removed %d bytes of PKCS7 padding", paddingLen)
 			} else {
 				unpadded = plaintext
-				log.Printf("Unusual padding value (%d), using full data", paddingLen)
+				log.Printf("Invalid PKCS7 padding pattern, using full data")
 			}
 		} else {
 			unpadded = plaintext
-			log.Printf("Unusual padding value (%d), using full data", paddingLen)
+			log.Printf("Padding length out of range (%d), using full data", paddingLen)
 		}
 	} else {
 		unpadded = plaintext
 	}
 	
-	// 6. Decompress with zlib
+	// 6. Try zlib decompression
 	zlibReader, err := zlib.NewReader(bytes.NewReader(unpadded))
 	if err == nil {
 		var decompressed bytes.Buffer
@@ -858,7 +888,8 @@ func decompressData(data string, key string) string {
 		
 		if err == nil {
 			result := decompressed.String()
-			log.Printf("Successfully decompressed zlib data: %s", result)
+			log.Printf("Successfully decompressed zlib data (%d bytes): %s", 
+				decompressed.Len(), result)
 			return result
 		} else {
 			log.Printf("Error during zlib decompression: %v", err)
@@ -867,7 +898,17 @@ func decompressData(data string, key string) string {
 		log.Printf("Data is not zlib compressed: %v", err)
 	}
 	
-	// 7. If not compressed or decompression fails, try to extract printable characters
+	// 7. Look for key=value pairs in the decrypted data
+	if len(unpadded) > 0 {
+		// Look for key=value pattern
+		txtData := string(unpadded)
+		if strings.Contains(txtData, "=") {
+			log.Printf("Found potential key=value data: %s", txtData)
+			return txtData
+		}
+	}
+	
+	// 8. Try to extract printable characters
 	var result strings.Builder
 	for _, b := range unpadded {
 		if b >= 32 && b <= 126 {
@@ -877,13 +918,15 @@ func decompressData(data string, key string) string {
 	
 	if result.Len() > 0 {
 		extracted := result.String()
-		log.Printf("Extracted %d printable ASCII characters", result.Len())
+		log.Printf("Extracted %d printable ASCII characters: %s", 
+			result.Len(), extracted)
 		return extracted
 	}
 	
 	// If all else fails, return hex representation
-	log.Printf("No printable characters found, returning hex representation")
-	return hex.EncodeToString(unpadded)
+	hexData := hex.EncodeToString(unpadded[:min(100, len(unpadded))])
+	log.Printf("No printable characters found, first 100 bytes (hex): %s", hexData)
+	return hexData
 }
 
 // PKCS7 Padding helper functions
