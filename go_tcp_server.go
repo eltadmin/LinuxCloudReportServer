@@ -6,6 +6,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/md5"
+	"crypto/sha1"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -598,9 +599,18 @@ func compressData(data string, key string) string {
 	// Ведем подробный лог процесса шифрования для отладки
 	log.Printf("Encrypting data: '%s' with key: '%s'", data, key)
 	
-	// 1. Вычисляем MD5 хеш ключа для создания 16-байтного ключа AES-128
-	keyMD5 := md5.Sum([]byte(key))
-	aesKey := keyMD5[:]
+	// Проверяем длину ключа и дополняем, если короткий (как в Delphi)
+	if len(key) >= 1 && len(key) <= 5 {
+		key = key + "123456"
+		log.Printf("Key is too short, padded to: %s", key)
+	}
+	
+	// 1. Вычисляем SHA1 хеш ключа (именно так делает Delphi в DCPcrypt.pas)
+	// Delphi: Hash.Update(Key[1],Length(Key)); Hash.Final(KeyHash^);
+	h := sha1.New()
+	h.Write([]byte(key))
+	keyHash := h.Sum(nil)
+	aesKey := keyHash[:16] // AES-128 использует 16 байт
 	
 	// 2. Сжимаем данные с помощью zlib
 	var compressed bytes.Buffer
@@ -645,11 +655,12 @@ func compressData(data string, key string) string {
 	
 	log.Printf("Encryption steps:")
 	log.Printf("1. Original data (%d bytes): %s", len(data), data)
-	log.Printf("2. Key MD5: %x", keyMD5)
-	log.Printf("3. Compressed (%d bytes)", compressed.Len())
-	log.Printf("4. Padded for AES (%d bytes)", len(plaintext))
-	log.Printf("5. Encrypted with AES-CBC (%d bytes)", len(ciphertext))
-	log.Printf("6. Base64 encoded (%d bytes): %s", len(encoded), encoded)
+	log.Printf("2. Key SHA1: %x", keyHash)
+	log.Printf("3. AES key (16 bytes): %x", aesKey)
+	log.Printf("4. Compressed (%d bytes)", compressed.Len())
+	log.Printf("5. Padded for AES (%d bytes)", len(plaintext))
+	log.Printf("6. Encrypted with AES-CBC (%d bytes)", len(ciphertext))
+	log.Printf("7. Base64 encoded (%d bytes): %s", len(encoded), encoded)
 	
 	return encoded
 }
@@ -658,6 +669,12 @@ func compressData(data string, key string) string {
 func decompressData(data string, key string) string {
 	// Ведем подробный лог процесса расшифровки для отладки
 	log.Printf("Decrypting data: '%s' with key: '%s'", data, key)
+	
+	// Проверяем длину ключа и дополняем, если короткий (как в Delphi)
+	if len(key) >= 1 && len(key) <= 5 {
+		key = key + "123456"
+		log.Printf("Key is too short, padded to: %s", key)
+	}
 	
 	// Проверяваме дали низът е валиден Base64 и допълваме с padding, ако е необходимо
 	// Delphi Base64 може да не използва padding, затова трябва да го добавим
@@ -687,9 +704,11 @@ func decompressData(data string, key string) string {
 		log.Printf("Succeeded decoding base64 with URL-safe character substitutions")
 	}
 	
-	// 2. Вычисляем MD5 хеш ключа для AES
-	keyMD5 := md5.Sum([]byte(key))
-	aesKey := keyMD5[:]
+	// 2. Вычисляем SHA1 хеш ключа (именно так делает Delphi в DCPcrypt.pas)
+	h := sha1.New()
+	h.Write([]byte(key))
+	keyHash := h.Sum(nil)
+	aesKey := keyHash[:16] // AES-128 использует 16 байт
 	
 	// 3. Проверяем размер данных и выравниваем до блока AES если необходимо
 	blockSize := aes.BlockSize // 16 bytes
@@ -757,13 +776,14 @@ func decompressData(data string, key string) string {
 	log.Printf("Decryption steps:")
 	log.Printf("1. Base64 encoded input (%d bytes): %s", inputLength, data[:min(inputLength, 100)]+"...")
 	log.Printf("2. Decoded base64 (%d bytes)", len(ciphertext))
-	log.Printf("3. Key MD5: %x", keyMD5)
-	log.Printf("4. Decrypted with AES-CBC (%d bytes)", len(plaintext))
-	log.Printf("5. Removed padding (%d bytes)", len(unpaddedData))
+	log.Printf("3. Key SHA1: %x", keyHash)
+	log.Printf("4. AES key (16 bytes): %x", aesKey)
+	log.Printf("5. Decrypted with AES-CBC (%d bytes)", len(plaintext))
+	log.Printf("6. Removed padding (%d bytes)", len(unpaddedData))
 	if err == nil {
-		log.Printf("6. Decompressed (%d bytes): %s", len(decompressed), result)
+		log.Printf("7. Decompressed (%d bytes): %s", len(decompressed), result)
 	} else {
-		log.Printf("6. Decompression failed - using raw data (%d bytes): %s", len(unpaddedData), string(unpaddedData))
+		log.Printf("7. Decompression failed - using raw data (%d bytes): %s", len(unpaddedData), string(unpaddedData))
 	}
 	
 	return result
