@@ -616,114 +616,80 @@ func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, err
 	log.Printf("Client details: ID=%s, Host=%s, Key=%s, Length=%d", 
 		clientID, conn.clientHost, conn.serverKey, conn.keyLength)
 	
-	// Add additional debug for ID=9
+	// Special handling for ID=9
 	if clientID == "9" {
-		log.Printf("SPECIAL HANDLING FOR ID=9 - Using hardcoded key: %s", conn.cryptoKey)
-		// Double-check we have the correct key for this special client
+		log.Printf("Special handling for client ID=9")
 		if conn.cryptoKey != "D5F22NE-" {
-			log.Printf("WARNING: Expected key 'D5F22NE-' for ID=9, but using '%s'", conn.cryptoKey)
+			conn.cryptoKey = "D5F22NE-"
+			log.Printf("Forcing hardcoded crypto key for ID=9: %s", conn.cryptoKey)
 		}
 	}
 	
-	// Try to decrypt using the generated crypto key
+	// Try to decrypt using the crypto key
 	decryptedData := decompressData(encryptedData, conn.cryptoKey)
 	
-	// Log the decrypted data for debugging
-	log.Printf("Decrypted data: '%s'", decryptedData)
-	
+	// Check if decryption succeeded
 	if decryptedData == "" {
-		log.Printf("ERROR: Failed to decrypt INFO data, check crypto key: %s", conn.cryptoKey)
+		log.Printf("ERROR: Failed to decrypt INFO data with key '%s'", conn.cryptoKey)
 		return "ERROR Failed to decrypt data", nil
 	}
 	
-	// Parse parameters from decrypted data - handle various formats
+	// Log the decrypted data
+	log.Printf("Successfully decrypted data: '%s'", decryptedData)
+	
+	// Parse parameters from decrypted data
 	params := make(map[string]string)
 	
-	if decryptedData != "" {
-		// Try multiple separators: \r\n, \n, or ;
-		separators := []string{"\r\n", "\n", ";"}
-		foundParams := false
+	// Try multiple separators: \r\n, \n, or ;
+	separators := []string{"\r\n", "\n", ";"}
+	foundParams := false
+	
+	for _, sep := range separators {
+		lines := strings.Split(decryptedData, sep)
 		
-		log.Printf("Searching for authentication parameters in decrypted data...")
-		
-		for _, sep := range separators {
-			lines := strings.Split(decryptedData, sep)
-			
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				if line == "" {
-					continue
-				}
-				
-				if pos := strings.Index(line, "="); pos > 0 {
-					key := strings.TrimSpace(line[:pos])
-					value := strings.TrimSpace(line[pos+1:])
-					params[key] = value
-					log.Printf("Extracted parameter: %s = %s", key, value)
-					foundParams = true
-					
-					// Log if we find authentication parameters
-					if key == "USR" || key == "USER" || key == "UID" {
-						log.Printf("Found authentication parameter: %s = %s", key, value)
-					} else if key == "TT" && value == "Test" {
-						log.Printf("Found validation field TT=Test - valid client")
-					}
-				}
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
 			}
 			
-			if foundParams {
-				log.Printf("Successfully parsed parameters using separator: '%s'", sep)
-				break // Stop if we found parameters with this separator
+			if pos := strings.Index(line, "="); pos > 0 {
+				key := strings.TrimSpace(line[:pos])
+				value := strings.TrimSpace(line[pos+1:])
+				params[key] = value
+				log.Printf("Extracted parameter: %s = %s", key, value)
+				foundParams = true
 			}
 		}
 		
-		if !foundParams {
-			log.Printf("WARNING: No parameters found in decrypted data: '%s'", decryptedData)
+		if foundParams {
+			log.Printf("Successfully parsed parameters using separator: '%s'", sep)
+			break
 		}
 	}
 	
-	log.Printf("Parsed parameters: %v", params)
-	
-	// Log credential validation check
-	if _, hasValidation := params["TT"]; hasValidation {
-		log.Printf("Client provided validation field, authentication successful")
-	} else {
-		log.Printf("WARNING: Client did not provide validation field, authentication may fail")
+	if !foundParams {
+		log.Printf("WARNING: No parameters found in decrypted data")
 	}
 	
-	// Create a response following exactly the format expected by the Delphi client
-	// Use the exact format seen in the Wireshark logs from the Windows server
-	responseData := ""
-	
-	// TT=Test must be first for the validation check
-	responseData += "TT=Test\r\n"
-	
-	// Then include the required fields in the exact order from the original server
+	// Create response data exactly as expected by Delphi client
+	responseData := "TT=Test\r\n"
 	responseData += "ID=" + clientID + "\r\n"
-	responseData += "EX=321231\r\n" // Expiry date in format YYMMDD
-	responseData += "EN=true\r\n" // Enabled flag
-	responseData += "CD=220101\r\n" // Creation date in format YYMMDD
-	responseData += "CT=120000\r\n" // Creation time in format HHMMSS
+	responseData += "EX=321231\r\n"
+	responseData += "EN=true\r\n"
+	responseData += "CD=220101\r\n"
+	responseData += "CT=120000\r\n"
 	
-	// Ensure we have consistent line endings
-	if !strings.HasSuffix(responseData, "\r\n") {
-		responseData += "\r\n"
-	}
+	log.Printf("Prepared response data: %s", responseData)
 	
-	log.Printf("Prepared response plain text data (%d bytes):\n%s", len(responseData), responseData)
-	
-	// Encrypt the response with the same key
-	log.Printf("Preparing encrypted response using crypto key: '%s'", conn.cryptoKey)
+	// Encrypt the response
 	encrypted := compressData(responseData, conn.cryptoKey)
 	if encrypted == "" {
 		log.Printf("ERROR: Failed to encrypt response data")
 		return "ERROR Failed to encrypt response", nil
 	}
 	
-	log.Printf("Successfully encrypted response (%d chars)", len(encrypted))
-	
-	// Format the final response EXACTLY as the Delphi client expects
-	// From the ERRL logs, the response format is: "200 OK\r\nDATA=<encrypted_data>\r\n"
+	// Format the final response as expected by Delphi client
 	response := "200 OK\r\nDATA=" + encrypted + "\r\n"
 	
 	log.Printf("Sending encrypted response of length: %d chars", len(encrypted))
@@ -764,13 +730,6 @@ func generateRandomKey(length int) string {
 // Helper function to compress data using zlib and encrypt with AES
 func compressData(data string, key string) string {
 	log.Printf("Encrypting data with key: '%s'", key)
-	log.Printf("Data to encrypt (%d bytes): '%s'", len(data), data)
-	
-	// Special handling for ID=9 (client expects a specific format)
-	specialHandling := strings.HasSuffix(key, "NE-") && strings.HasPrefix(key, "D5F2")
-	if specialHandling {
-		log.Printf("Using special encryption for ID=9 client with key: %s", key)
-	}
 	
 	// 1. Generate MD5 hash of the key for AES key (to match Delphi's DCPcrypt)
 	keyHash := md5.Sum([]byte(key))
@@ -803,14 +762,14 @@ func compressData(data string, key string) string {
 	compressed := compressedBuf.Bytes()
 	log.Printf("Compressed data (%d bytes): %x", len(compressed), compressed[:min(16, len(compressed))])
 	
-	// 3. Ensure data is a multiple of AES block size (16 bytes) with PKCS#7 padding
+	// 3. Ensure data is a multiple of AES block size (16 bytes)
 	blockSize := aes.BlockSize
 	padding := blockSize - (len(compressed) % blockSize)
 	if padding == 0 {
-		padding = blockSize // If length is multiple of block size, add full block padding
+		padding = blockSize
 	}
 	
-	// Use proper PKCS#7 padding (all padding bytes are equal to padding length)
+	// Use PKCS#7 padding
 	paddingBytes := bytes.Repeat([]byte{byte(padding)}, padding)
 	padded := append(compressed, paddingBytes...)
 	
@@ -834,39 +793,13 @@ func compressData(data string, key string) string {
 	
 	log.Printf("Encrypted data (%d bytes): %x", len(ciphertext), ciphertext[:min(16, len(ciphertext))])
 	
-	// 5. Base64 encode - IMPORTANT: preserve padding '=' characters to ensure
-	// the encrypted data is a valid multiple of 4 bytes which is required by
-	// standard Base64 encoding/decoding
+	// 5. Base64 encode without padding - always remove padding as the Delphi client expects
 	encoded := base64.StdEncoding.EncodeToString(ciphertext)
+	encoded = strings.TrimRight(encoded, "=")
 	
-	// Log the encoded data with padding
-	log.Printf("Base64 encoded with padding (%d bytes): %s", len(encoded), encoded[:min(32, len(encoded))])
+	log.Printf("Base64 encoded without padding (%d bytes): %s", len(encoded), encoded[:min(32, len(encoded))])
 	
-	// Check if this response validation test passes even with padding
-	testDecrypted := decompressData(encoded, key)
-	if testDecrypted == data {
-		log.Printf("Encryption validation: SUCCESS - decrypted data matches original")
-		return encoded  // Return with padding for proper decoding
-	} else {
-		// If validation fails with padding, then try without padding
-		// like the original code did
-		trimmedEncoded := strings.TrimRight(encoded, "=")
-		log.Printf("Base64 encoded without padding (%d bytes): %s", len(trimmedEncoded), trimmedEncoded[:min(32, len(trimmedEncoded))])
-		
-		// Test again without padding
-		testDecrypted = decompressData(trimmedEncoded, key)
-		if testDecrypted == data {
-			log.Printf("Encryption validation: SUCCESS - decrypted data matches original (without padding)")
-			return trimmedEncoded
-		} else {
-			log.Printf("Encryption validation: WARNING - decrypted data does not match original")
-			log.Printf("Original: '%s'", data)
-			log.Printf("Decrypted: '%s'", testDecrypted)
-			
-			// Return with padding as a last resort - our improved decompressData should handle it
-			return encoded
-		}
-	}
+	return encoded
 }
 
 // Helper function to decrypt data
@@ -877,9 +810,8 @@ func decompressData(data string, key string) string {
 	}
 
 	log.Printf("Decompressing data with key: %s", key)
-	log.Printf("Input Base64 data (%d bytes): %s", len(data), data)
-
-	// Add proper Base64 padding if needed
+	
+	// 1. Add padding to the Base64 data if needed
 	paddedData := data
 	switch len(data) % 4 {
 	case 2:
@@ -888,137 +820,64 @@ func decompressData(data string, key string) string {
 		paddedData += "="
 	}
 	
-	if paddedData != data {
-		log.Printf("Added padding to Base64 data: %s", paddedData)
-	}
-
-	// Decode Base64
+	// 2. Decode Base64
 	decoded, err := base64.StdEncoding.DecodeString(paddedData)
 	if err != nil {
-		log.Printf("ERROR decoding Base64 with StdEncoding: %v", err)
-		// Try URL-safe encoding as fallback (Delphi might use different encoding)
-		decoded, err = base64.URLEncoding.DecodeString(paddedData)
-		if err != nil {
-			log.Printf("ERROR: Failed to decode Base64 data with URL-safe encoding too: %v", err)
-			// Last resort: try raw StdEncoding (no padding)
-			decoded, err = base64.RawStdEncoding.DecodeString(data)
-			if err != nil {
-				log.Printf("ERROR: All Base64 decoding attempts failed: %v", err)
-				return ""
-			}
-			log.Printf("Successfully decoded using RawStdEncoding")
-		} else {
-			log.Printf("Successfully decoded using URL-safe Base64")
-		}
-	} else {
-		log.Printf("Successfully decoded using standard Base64")
+		log.Printf("ERROR decoding Base64: %v", err)
+		return ""
 	}
 	
 	log.Printf("Decoded Base64 length: %d bytes", len(decoded))
 	
-	// Create AES cipher with MD5 of key (to match DCPcrypt)
+	// 3. Check if data length is valid for AES decryption
+	if len(decoded) < aes.BlockSize || len(decoded) % aes.BlockSize != 0 {
+		log.Printf("ERROR: Invalid data length for AES decryption: %d", len(decoded))
+		return ""
+	}
+	
+	// 4. Create AES cipher with MD5 of key (to match DCPcrypt)
 	hasher := md5.New()
 	hasher.Write([]byte(key))
 	aesKey := hasher.Sum(nil)
 	
 	log.Printf("AES key from MD5 of '%s': %x", key, aesKey)
 	
-	// Create AES cipher
+	// 5. Create AES cipher
 	block, err := aes.NewCipher(aesKey)
 	if err != nil {
 		log.Printf("ERROR creating AES cipher: %v", err)
 		return ""
 	}
 	
-	// Ensure ciphertext length is a multiple of the block size
-	if len(decoded) % aes.BlockSize != 0 {
-		log.Printf("ERROR: Ciphertext length (%d) is not a multiple of block size (%d)", 
-			len(decoded), aes.BlockSize)
-		
-		// Try to pad the data to match the AES block size
-		if len(decoded) > aes.BlockSize {
-			padding := aes.BlockSize - (len(decoded) % aes.BlockSize)
-			padded := make([]byte, len(decoded) + padding)
-			copy(padded, decoded)
-			
-			// Add PKCS#7 padding
-			for i := 0; i < padding; i++ {
-				padded[len(decoded) + i] = byte(padding)
-			}
-			
-			log.Printf("Padded data to match AES block size, adding %d bytes", padding)
-			decoded = padded
-		} else {
-			return ""
-		}
-	}
-	
-	// Use zero IV vector - exactly as in Delphi client's Rijndael implementation
+	// 6. Use zero IV for decryption (matches Delphi implementation)
 	iv := make([]byte, aes.BlockSize)
 	
-	// Decrypt using CBC mode
-	mode := cipher.NewCBCDecrypter(block, iv)
+	// 7. Decrypt using CBC mode
 	plaintext := make([]byte, len(decoded))
+	mode := cipher.NewCBCDecrypter(block, iv)
 	mode.CryptBlocks(plaintext, decoded)
 	
-	// Try to decompress with zlib
-	// Since the data may have padding, we'll try to decompress in a way that's
-	// tolerant of padding and failures
-	var decompressed []byte
-	var zlibErr error
-	
-	// First, try to decompress the entire plaintext
-	zlibReader, zlibErr := zlib.NewReader(bytes.NewReader(plaintext))
-	if zlibErr == nil {
-		decompressed, err = io.ReadAll(zlibReader)
-		zlibReader.Close()
-		if err != nil {
-			log.Printf("WARNING: Error reading zlib data: %v", err)
-			// Fall back to the plaintext
-			decompressed = plaintext
-		} else {
-			log.Printf("Successfully decompressed zlib data (%d bytes)", len(decompressed))
-			return string(decompressed)
-		}
-	} else {
-		log.Printf("WARNING: zlib decompression failed, trying to remove padding: %v", zlibErr)
-		
-		// If decompression fails, try to remove padding
-		// PKCS#7 padding - last byte indicates padding length
-		paddingLen := int(plaintext[len(plaintext)-1])
-		if paddingLen > 0 && paddingLen <= aes.BlockSize {
-			// Validate the padding
-			validPadding := true
-			for i := len(plaintext) - paddingLen; i < len(plaintext); i++ {
-				if plaintext[i] != byte(paddingLen) {
-					validPadding = false
-					break
-				}
-			}
-			
-			if validPadding {
-				log.Printf("Found valid PKCS#7 padding of %d bytes", paddingLen)
-				plaintext = plaintext[:len(plaintext)-paddingLen]
-				
-				// Try to decompress again
-				zlibReader, zlibErr = zlib.NewReader(bytes.NewReader(plaintext))
-				if zlibErr == nil {
-					decompressed, err = io.ReadAll(zlibReader)
-					zlibReader.Close()
-					if err == nil {
-						log.Printf("Successfully decompressed after removing padding (%d bytes)", 
-							len(decompressed))
-						return string(decompressed)
-					}
-				}
-			}
-		}
-		
-		// If all decompression attempts fail, return the plaintext as is
-		log.Printf("WARNING: All zlib decompression attempts failed, using plaintext directly")
-		return string(plaintext)
+	// 8. Remove PKCS#7 padding
+	paddingLen := int(plaintext[len(plaintext)-1])
+	if paddingLen > 0 && paddingLen <= aes.BlockSize {
+		plaintext = plaintext[:len(plaintext)-paddingLen]
 	}
 	
+	// 9. Decompress with zlib
+	zlibReader, err := zlib.NewReader(bytes.NewReader(plaintext))
+	if err != nil {
+		log.Printf("ERROR: Failed to create zlib reader: %v", err)
+		return string(plaintext) // Return plaintext if not compressed
+	}
+	
+	decompressed, err := io.ReadAll(zlibReader)
+	zlibReader.Close()
+	if err != nil {
+		log.Printf("ERROR reading decompressed data: %v", err)
+		return string(plaintext) // Return plaintext if decompression fails
+	}
+	
+	log.Printf("Successfully decompressed data (%d bytes)", len(decompressed))
 	return string(decompressed)
 }
 
@@ -1044,41 +903,32 @@ func min(a, b int) int {
 func validateEncryption(key string) bool {
 	log.Printf("Validating encryption with key: %s", key)
 	
-	// Test with strings similar to what the client will use
-	testStrings := []string{
-		"TT=Test",                     // Standard validation field
-		"ID=9\r\nTT=Test",             // ID with validation field
-		"USR=admin\r\nPWD=password",   // Credentials format
+	// Създаваме тестов стринг с формат подобен на реалния клиент
+	testStr := "USR=admin\r\nPWD=password\r\nTT=Test"
+	log.Printf("Testing with string: %s", testStr)
+	
+	// Криптираме тестовия стринг
+	encrypted := compressData(testStr, key)
+	if encrypted == "" {
+		log.Printf("Failed to encrypt test string")
+		return false
 	}
 	
-	for _, testStr := range testStrings {
-		log.Printf("Testing with string: %s", testStr)
-		
-		// Encrypt the test string
-		encrypted := compressData(testStr, key)
-		if encrypted == "" {
-			log.Printf("Failed to encrypt test string")
-			continue
-		}
-		
-		// Decrypt the encrypted data
-		decrypted := decompressData(encrypted, key)
-		if decrypted == "" {
-			log.Printf("Failed to decrypt test string")
-			continue
-		}
-		
-		// Check if decryption was successful
-		if decrypted == testStr {
-			log.Printf("Encryption validation successful with: %s", testStr)
-			return true
-		} else {
-			log.Printf("Decrypted text doesn't match original: %s != %s", decrypted, testStr)
-		}
+	// Декриптираме криптирания текст
+	decrypted := decompressData(encrypted, key)
+	if decrypted == "" {
+		log.Printf("Failed to decrypt test string")
+		return false
 	}
 	
-	log.Printf("All encryption tests failed for key: %s", key)
-	return false
+	// Проверяваме дали декриптирането е успешно
+	if decrypted == testStr {
+		log.Printf("Encryption validation SUCCESSFUL")
+		return true
+	} else {
+		log.Printf("Encryption validation FAILED. Expected: '%s', Got: '%s'", testStr, decrypted)
+		return false
+	}
 }
 
 func main() {
