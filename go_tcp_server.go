@@ -727,6 +727,12 @@ func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, err
 				// If one of the alternatives worked, update the connection's crypto key
 				if decryptedData != "" {
 					log.Printf("Alternative key worked for client ID=2!")
+					
+					// First try to determine which alternative worked
+					altKey1 = conn.serverKey + "T" + hostFirstChars + hostLastChar
+					altKey2 := "D5F2TNE-"
+					altKey3 := "D5F22NE-"
+					
 					// Store the working key for future use
 					if conn.cryptoKey != altKey1 && decryptedData == decompressData(encryptedData, altKey1) {
 						conn.cryptoKey = altKey1
