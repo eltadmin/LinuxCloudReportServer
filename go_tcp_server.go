@@ -487,7 +487,28 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	conn.serverKey = serverKey
 	conn.keyLength = lenValue
 	
-	// Extract host parts for key generation
+	// Generate crypto key using our unified function - this ensures consistent key generation
+	cryptoKey := generateCryptoKey(idValue, dictEntry)
+	conn.cryptoKey = cryptoKey
+	log.Printf("Using crypto key for client ID=%s: %s", idValue, cryptoKey)
+	
+	// For backwards compatibility with logs, extract dictionary part
+	var dictEntryPart string
+	if idValue == "9" {
+		if len(dictEntry) >= 2 {
+			dictEntryPart = dictEntry[:2]
+		} else {
+			dictEntryPart = dictEntry
+		}
+	} else {
+		if len(dictEntry) >= lenValue {
+			dictEntryPart = dictEntry[:lenValue]
+		} else {
+			dictEntryPart = dictEntry
+		}
+	}
+	
+	// Extract host parts for logging and compatibility
 	hostFirstChars := "NE" // Default if we can't get proper host
 	hostLastChar := "-"    // Default if we can't get proper host
 	
@@ -498,36 +519,6 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 		if len(hostVal) >= 1 {
 			hostLastChar = hostVal[len(hostVal)-1:]
 		}
-	}
-	
-	// Generate dictionary part based on client ID and LEN
-	dictEntryPart := ""
-	if idValue == "9" {
-		// Special handling for ID=9 based on observed logs
-		if len(dictEntry) >= 2 {
-			dictEntryPart = dictEntry[:2] // Use first 2 chars for ID=9
-			log.Printf("Special handling for ID=9: Using first 2 chars of dictionary entry %s: %s", 
-				dictEntry, dictEntryPart)
-		} else {
-			dictEntryPart = dictEntry
-		}
-		
-		// For ID=9, use the hardcoded key that works
-		cryptoKey := "D5F22NE-"
-		conn.cryptoKey = cryptoKey
-		log.Printf("Using hardcoded crypto key for ID=9: %s", cryptoKey)
-	} else {
-		// Normal handling for other IDs
-		if len(dictEntry) >= lenValue {
-			dictEntryPart = dictEntry[:lenValue]
-		} else {
-			dictEntryPart = dictEntry
-		}
-		
-		// Create the crypto key by combining all parts according to the protocol
-		cryptoKey := serverKey + dictEntryPart + hostFirstChars + hostLastChar
-		conn.cryptoKey = cryptoKey
-		log.Printf("Generated crypto key for client %s: %s", idValue, cryptoKey)
 	}
 	
 	// Validate the encryption works with this key
@@ -1005,7 +996,7 @@ func getDictionaryEntry(idValue string) (string, error) {
 func generateCryptoKey(clientID string, dictEntry string) string {
 	if len(dictEntry) == 0 {
 		log.Printf("[ID=%s] Warning: Empty dictionary entry for key generation", clientID)
-		return "NE-" // Fallback key
+		return "D5F2NE-" // Fallback key with server prefix
 	}
 
 	// Default key generation logic
@@ -1023,17 +1014,23 @@ func generateCryptoKey(clientID string, dictEntry string) string {
 		return "D5F2cNE-" // Hard-coded key for ID=5
 	}
 	
+	// Get server key prefix (same as used in handleInit)
+	serverKey := "D5F2"
+	if DEBUG_MODE && USE_FIXED_DEBUG_KEY {
+		serverKey = DEBUG_SERVER_KEY
+	}
+	
 	// For all other IDs, use standard key generation
 	if len(dictEntry) >= cryptoLen {
 		keyPrefix := dictEntry[:cryptoLen]
-		fullKey := keyPrefix + "NE-"
+		fullKey := serverKey + keyPrefix + "NE-"
 		log.Printf("[ID=%s] Generated standard key: %s using prefix: %s", clientID, fullKey, keyPrefix)
 		return fullKey
 	}
 	
 	// Fallback if dictionary entry is too short
 	log.Printf("[ID=%s] Warning: Dictionary entry shorter than required length", clientID)
-	return dictEntry + "NE-"
+	return serverKey + dictEntry + "NE-"
 }
 
 // Test the crypto key with a test string
