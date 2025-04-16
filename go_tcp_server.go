@@ -834,25 +834,39 @@ func compressData(data string, key string) string {
 	
 	log.Printf("Encrypted data (%d bytes): %x", len(ciphertext), ciphertext[:min(16, len(ciphertext))])
 	
-	// 5. Base64 encode
+	// 5. Base64 encode - IMPORTANT: preserve padding '=' characters to ensure
+	// the encrypted data is a valid multiple of 4 bytes which is required by
+	// standard Base64 encoding/decoding
 	encoded := base64.StdEncoding.EncodeToString(ciphertext)
 	
-	// Remove trailing '=' characters as Delphi TBase64 does
-	encoded = strings.TrimRight(encoded, "=")
+	// Log the encoded data with padding
+	log.Printf("Base64 encoded with padding (%d bytes): %s", len(encoded), encoded[:min(32, len(encoded))])
 	
-	log.Printf("Base64 encoded without padding (%d bytes): %s", len(encoded), encoded[:min(32, len(encoded))])
-	
-	// Validate that we can decrypt this data
+	// Check if this response validation test passes even with padding
 	testDecrypted := decompressData(encoded, key)
 	if testDecrypted == data {
 		log.Printf("Encryption validation: SUCCESS - decrypted data matches original")
+		return encoded  // Return with padding for proper decoding
 	} else {
-		log.Printf("Encryption validation: WARNING - decrypted data does not match original")
-		log.Printf("Original: '%s'", data)
-		log.Printf("Decrypted: '%s'", testDecrypted)
+		// If validation fails with padding, then try without padding
+		// like the original code did
+		trimmedEncoded := strings.TrimRight(encoded, "=")
+		log.Printf("Base64 encoded without padding (%d bytes): %s", len(trimmedEncoded), trimmedEncoded[:min(32, len(trimmedEncoded))])
+		
+		// Test again without padding
+		testDecrypted = decompressData(trimmedEncoded, key)
+		if testDecrypted == data {
+			log.Printf("Encryption validation: SUCCESS - decrypted data matches original (without padding)")
+			return trimmedEncoded
+		} else {
+			log.Printf("Encryption validation: WARNING - decrypted data does not match original")
+			log.Printf("Original: '%s'", data)
+			log.Printf("Decrypted: '%s'", testDecrypted)
+			
+			// Return with padding as a last resort - our improved decompressData should handle it
+			return encoded
+		}
 	}
-	
-	return encoded
 }
 
 // Helper function to decrypt data
@@ -865,17 +879,39 @@ func decompressData(data string, key string) string {
 	log.Printf("Decompressing data with key: %s", key)
 	log.Printf("Input Base64 data (%d bytes): %s", len(data), data)
 
+	// Add proper Base64 padding if needed
+	paddedData := data
+	switch len(data) % 4 {
+	case 2:
+		paddedData += "=="
+	case 3:
+		paddedData += "="
+	}
+	
+	if paddedData != data {
+		log.Printf("Added padding to Base64 data: %s", paddedData)
+	}
+
 	// Decode Base64
-	decoded, err := base64.StdEncoding.DecodeString(data)
+	decoded, err := base64.StdEncoding.DecodeString(paddedData)
 	if err != nil {
-		log.Printf("ERROR decoding Base64: %v", err)
+		log.Printf("ERROR decoding Base64 with StdEncoding: %v", err)
 		// Try URL-safe encoding as fallback (Delphi might use different encoding)
-		decoded, err = base64.URLEncoding.DecodeString(data)
+		decoded, err = base64.URLEncoding.DecodeString(paddedData)
 		if err != nil {
 			log.Printf("ERROR: Failed to decode Base64 data with URL-safe encoding too: %v", err)
-			return ""
+			// Last resort: try raw StdEncoding (no padding)
+			decoded, err = base64.RawStdEncoding.DecodeString(data)
+			if err != nil {
+				log.Printf("ERROR: All Base64 decoding attempts failed: %v", err)
+				return ""
+			}
+			log.Printf("Successfully decoded using RawStdEncoding")
+		} else {
+			log.Printf("Successfully decoded using URL-safe Base64")
 		}
-		log.Printf("Successfully decoded using URL-safe Base64")
+	} else {
+		log.Printf("Successfully decoded using standard Base64")
 	}
 	
 	log.Printf("Decoded Base64 length: %d bytes", len(decoded))
@@ -898,7 +934,23 @@ func decompressData(data string, key string) string {
 	if len(decoded) % aes.BlockSize != 0 {
 		log.Printf("ERROR: Ciphertext length (%d) is not a multiple of block size (%d)", 
 			len(decoded), aes.BlockSize)
-		return ""
+		
+		// Try to pad the data to match the AES block size
+		if len(decoded) > aes.BlockSize {
+			padding := aes.BlockSize - (len(decoded) % aes.BlockSize)
+			padded := make([]byte, len(decoded) + padding)
+			copy(padded, decoded)
+			
+			// Add PKCS#7 padding
+			for i := 0; i < padding; i++ {
+				padded[len(decoded) + i] = byte(padding)
+			}
+			
+			log.Printf("Padded data to match AES block size, adding %d bytes", padding)
+			decoded = padded
+		} else {
+			return ""
+		}
 	}
 	
 	// Use zero IV vector - exactly as in Delphi client's Rijndael implementation
