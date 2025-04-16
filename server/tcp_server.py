@@ -708,19 +708,19 @@ class TCPServer:
         conn.server_key = server_key
         conn.key_length = key_len
         
-        # Get dictionary entry for key construction
+        # Log the dictionary entry for reference, but we'll only use the ID value
         dict_entry = CRYPTO_DICTIONARY[key_id - 1]
-        crypto_dict_part = dict_entry[:key_len]
+        logger.info(f"Dictionary entry for ID {key_id}: {dict_entry}")
         
         # Extract host parts for key generation
         host_first_chars = conn.client_host[:2]  # First 2 chars
-        orig_host_last_char = conn.client_host[-1:]  # Last char
+        host_last_char = conn.client_host[-1:]  # Last char
         
         # Log info about host parts
-        logger.info(f"Host parts: original='{host_first_chars + orig_host_last_char}', cleaned='{conn.client_host[:3]}'")
+        logger.info(f"Host parts: first='{host_first_chars}', last='{host_last_char}'")
         
-        # Test multiple key combinations for Delphi compatibility
-        crypto_key = await self._test_crypto_key_variants(conn, server_key, crypto_dict_part)
+        # Test crypto key using the ID value directly
+        crypto_key = await self._test_crypto_key_variants(conn, server_key, str(key_id))
         
         # Format response for client
         response_str = self._format_init_response(server_key, key_len)
@@ -745,12 +745,19 @@ class TCPServer:
             The working crypto key
         """
         try:
-            # Construct crypto key using the method that matches Windows server
-            # Format: ServerKey + DictionaryPart + FirstTwoCharsOfHostname + LastCharOfHostname
+            # Construct crypto key using the method that matches the Go server
+            # Format: ServerKey + ID + FirstTwoCharsOfHostname + LastCharOfHostname
             host_first_chars = conn.client_host[:2]  # First 2 chars
             host_last_char = conn.client_host[-1:]  # Last char
             
-            working_key = server_key + crypto_dict_part + host_first_chars + host_last_char
+            # Use only a single digit from the ID instead of dictionary substring
+            # Extract the ID from the command (we need just the digit)
+            id_part = str(crypto_dict_part)
+            if len(id_part) > 1:
+                # If somehow we got a longer string, just take the first character
+                id_part = id_part[0]
+                
+            working_key = server_key + id_part + host_first_chars + host_last_char
             logger.info(f"Using crypto key: {working_key}")
             
             # Set the crypto key and test encryption
@@ -767,8 +774,8 @@ class TCPServer:
             return working_key
         except Exception as e:
             logger.error(f"Error creating crypto key: {e}", exc_info=True)
-            # Fall back to the original key construction method
-            working_key = server_key + crypto_dict_part + conn.client_host[:2] + conn.client_host[-1:]
+            # Fall back to a simpler key construction method
+            working_key = server_key + str(crypto_dict_part)[0] + conn.client_host[:2] + conn.client_host[-1:]
             conn.crypto_key = working_key
             return working_key
         
