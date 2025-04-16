@@ -2,8 +2,13 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/md5"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -11,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"compress/zlib"
 )
 
 // Configuration constants
@@ -490,8 +496,71 @@ func (s *TCPServer) handlePing(conn *TCPConnection) (string, error) {
 
 // Handle the INFO command - placeholder
 func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, error) {
-	// Real implementation would decrypt the data, process it, and encrypt the response
-	return "DATA=Response_Data", nil
+	// Для команды INFO нам нужно:
+	// 1. Расшифровать данные от клиента
+	// 2. Проанализировать запрос
+	// 3. Зашифровать и отправить ответ
+	
+	if len(parts) < 2 {
+		return "ERROR Invalid INFO command", nil
+	}
+	
+	// Извлечь зашифрованные данные
+	var encryptedData string
+	for _, part := range parts[1:] {
+		if strings.HasPrefix(part, "DATA=") {
+			encryptedData = part[5:] // все после "DATA="
+			break
+		}
+	}
+	
+	if encryptedData == "" {
+		return "ERROR No DATA parameter in INFO command", nil
+	}
+	
+	log.Printf("Received encrypted data: %s", encryptedData)
+	log.Printf("Using crypto key: %s", conn.cryptoKey)
+	
+	// Пытаемся расшифровать данные
+	decryptedData := decompressData(encryptedData, conn.cryptoKey)
+	log.Printf("Decrypted data: %s", decryptedData)
+	
+	// Извлекаем параметры из расшифрованных данных
+	params := make(map[string]string)
+	if decryptedData != "" {
+		lines := strings.Split(decryptedData, "\r\n")
+		for _, line := range lines {
+			if strings.Contains(line, "=") {
+				parts := strings.SplitN(line, "=", 2)
+				if len(parts) == 2 {
+					params[parts[0]] = parts[1]
+				}
+			}
+		}
+		log.Printf("Parsed parameters: %v", params)
+	}
+	
+	// Создаем ответ с указанием, что операция прошла успешно
+	// Добавим информацию из запроса
+	responseData := "RESP=OK\r\nUSRID=1\r\nINFO=Server received credentials\r\n"
+	
+	// Если запрос был на подключение/проверку учетных данных
+	if _, ok := params["USR"]; ok {
+		responseData += "CREDS=VALID\r\n"
+		
+		// Если в запросе было имя пользователя, вернем его для подтверждения
+		if username, ok := params["USR"]; ok {
+			responseData += fmt.Sprintf("USR=%s\r\n", username)
+		}
+	}
+	
+	// Создаем зашифрованный ответ по тому же формату, который ожидает клиент
+	encrypted := compressData(responseData, conn.cryptoKey)
+	response := fmt.Sprintf("DATA=%s", encrypted)
+	
+	log.Printf("Response data (plain): %s", responseData)
+	log.Printf("Sending encrypted response: %s", response)
+	return response, nil
 }
 
 // Handle the VERSION command - placeholder
@@ -524,22 +593,167 @@ func generateRandomKey(length int) string {
 	return string(result)
 }
 
-// Helper function to compress data using zlib - placeholder
+// Helper function to compress data using zlib and encrypt with AES
 func compressData(data string, key string) string {
-	// This is a placeholder. A real implementation would:
-	// 1. Hash the key with MD5
-	// 2. Use the hash as an AES key
-	// 3. Compress the data with zlib
-	// 4. Encrypt with AES-CBC
-	// 5. Base64 encode
-	return base64.StdEncoding.EncodeToString([]byte("compressed:" + data))
+	// Ведем подробный лог процесса шифрования для отладки
+	log.Printf("Encrypting data: '%s' with key: '%s'", data, key)
+	
+	// 1. Вычисляем MD5 хеш ключа для создания 16-байтного ключа AES-128
+	keyMD5 := md5.Sum([]byte(key))
+	aesKey := keyMD5[:]
+	
+	// 2. Сжимаем данные с помощью zlib
+	var compressed bytes.Buffer
+	w := zlib.NewWriter(&compressed)
+	_, err := w.Write([]byte(data))
+	if err != nil {
+		log.Printf("Error compressing data: %v", err)
+		return ""
+	}
+	err = w.Close()
+	if err != nil {
+		log.Printf("Error closing zlib writer: %v", err)
+		return ""
+	}
+	
+	// 3. Шифруем данные с помощью AES-CBC
+	// Создаем блок шифрования
+	block, err := aes.NewCipher(aesKey)
+	if err != nil {
+		log.Printf("Error creating AES cipher: %v", err)
+		return ""
+	}
+	
+	// Выравниваем данные до размера блока AES (16 байт)
+	plaintext := pkcs7Pad(compressed.Bytes(), aes.BlockSize)
+	
+	// Инициализируем IV (вектор инициализации) нулями, как в Delphi
+	iv := make([]byte, aes.BlockSize)
+	
+	// Создаем шифратор AES-CBC
+	mode := cipher.NewCBCEncrypter(block, iv)
+	
+	// Шифруем данные
+	ciphertext := make([]byte, len(plaintext))
+	mode.CryptBlocks(ciphertext, plaintext)
+	
+	// 4. Кодируем в base64
+	encoded := base64.StdEncoding.EncodeToString(ciphertext)
+	
+	log.Printf("Encryption steps:")
+	log.Printf("1. Original data (%d bytes): %s", len(data), data)
+	log.Printf("2. Key MD5: %x", keyMD5)
+	log.Printf("3. Compressed (%d bytes)", compressed.Len())
+	log.Printf("4. Padded for AES (%d bytes)", len(plaintext))
+	log.Printf("5. Encrypted with AES-CBC (%d bytes)", len(ciphertext))
+	log.Printf("6. Base64 encoded (%d bytes): %s", len(encoded), encoded)
+	
+	return encoded
 }
 
-// Helper function to decompress data - placeholder
+// Helper function to decompress data
 func decompressData(data string, key string) string {
-	// This is a placeholder for the reverse of compressData
-	decoded, _ := base64.StdEncoding.DecodeString(data)
-	return string(decoded)
+	// Ведем подробный лог процесса расшифровки для отладки
+	log.Printf("Decrypting data: '%s' with key: '%s'", data, key)
+	
+	// 1. Декодируем base64
+	ciphertext, err := base64.StdEncoding.DecodeString(data)
+	if err != nil {
+		log.Printf("Error decoding base64: %v", err)
+		return ""
+	}
+	
+	// 2. Вычисляем MD5 хеш ключа для AES
+	keyMD5 := md5.Sum([]byte(key))
+	aesKey := keyMD5[:]
+	
+	// 3. Расшифровываем с помощью AES-CBC
+	block, err := aes.NewCipher(aesKey)
+	if err != nil {
+		log.Printf("Error creating AES cipher: %v", err)
+		return ""
+	}
+	
+	// Проверяем, что данные имеют допустимый размер для AES
+	if len(ciphertext) < aes.BlockSize || len(ciphertext)%aes.BlockSize != 0 {
+		log.Printf("Ciphertext size is invalid: %d bytes", len(ciphertext))
+		return ""
+	}
+	
+	// Инициализируем IV нулями, как в Delphi
+	iv := make([]byte, aes.BlockSize)
+	
+	// Создаем дешифратор AES-CBC
+	mode := cipher.NewCBCDecrypter(block, iv)
+	
+	// Расшифровываем данные
+	plaintext := make([]byte, len(ciphertext))
+	mode.CryptBlocks(plaintext, ciphertext)
+	
+	// 4. Убираем PKCS7 padding
+	unpaddedData, err := pkcs7Unpad(plaintext, aes.BlockSize)
+	if err != nil {
+		log.Printf("Error removing padding: %v", err)
+		return ""
+	}
+	
+	// 5. Распаковываем с помощью zlib
+	zlibReader, err := zlib.NewReader(bytes.NewReader(unpaddedData))
+	if err != nil {
+		log.Printf("Error creating zlib reader: %v", err)
+		return ""
+	}
+	defer zlibReader.Close()
+	
+	// Читаем распакованные данные
+	decompressed, err := io.ReadAll(zlibReader)
+	if err != nil {
+		log.Printf("Error decompressing data: %v", err)
+		return ""
+	}
+	
+	result := string(decompressed)
+	
+	log.Printf("Decryption steps:")
+	log.Printf("1. Base64 encoded input (%d bytes): %s", len(data), data)
+	log.Printf("2. Decoded base64 (%d bytes)", len(ciphertext))
+	log.Printf("3. Key MD5: %x", keyMD5)
+	log.Printf("4. Decrypted with AES-CBC (%d bytes)", len(plaintext))
+	log.Printf("5. Removed padding (%d bytes)", len(unpaddedData))
+	log.Printf("6. Decompressed (%d bytes): %s", len(decompressed), result)
+	
+	return result
+}
+
+// PKCS7 Padding helper functions
+func pkcs7Pad(data []byte, blockSize int) []byte {
+	padding := blockSize - len(data)%blockSize
+	padtext := bytes.Repeat([]byte{byte(padding)}, padding)
+	return append(data, padtext...)
+}
+
+func pkcs7Unpad(data []byte, blockSize int) ([]byte, error) {
+	length := len(data)
+	if length == 0 {
+		return nil, fmt.Errorf("empty data")
+	}
+	if length%blockSize != 0 {
+		return nil, fmt.Errorf("data is not block-aligned: %d", length)
+	}
+	
+	padding := int(data[length-1])
+	if padding > blockSize || padding == 0 {
+		return nil, fmt.Errorf("invalid padding value: %d", padding)
+	}
+	
+	// Check padding
+	for i := length - padding; i < length; i++ {
+		if int(data[i]) != padding {
+			return nil, fmt.Errorf("invalid padding")
+		}
+	}
+	
+	return data[:length-padding], nil
 }
 
 // Helper function for min of two ints
