@@ -788,10 +788,9 @@ class TCPServer:
         Returns:
             Formatted response string
         """
-        # Format to match the Windows server's response exactly
-        # For Delphi TStrings.Values compatibility, this needs to be exactly in the KEY=value\r\nLEN=value format
-        # No trailing \r\n as that's not part of the parsed content
-        return f"KEY={server_key}\r\nLEN={key_length}"
+        # Format to match the Windows server's response exactly based on Wireshark capture
+        # Format: "200-KEY=xxx\r\n200 LEN=y\r\n"
+        return f"200-KEY={server_key}\r\n200 LEN={key_length}\r\n"
         
     async def _handle_error(self, conn: TCPConnection, parts: List[str]) -> bytes:
         """
