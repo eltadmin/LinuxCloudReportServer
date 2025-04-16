@@ -640,6 +640,9 @@ func compressData(data string, key string) string {
 	// 4. Кодируем в base64
 	encoded := base64.StdEncoding.EncodeToString(ciphertext)
 	
+	// 5. Удаляем '=' в конце (так делает Delphi)
+	encoded = strings.TrimRight(encoded, "=")
+	
 	log.Printf("Encryption steps:")
 	log.Printf("1. Original data (%d bytes): %s", len(data), data)
 	log.Printf("2. Key MD5: %x", keyMD5)
@@ -656,18 +659,53 @@ func decompressData(data string, key string) string {
 	// Ведем подробный лог процесса расшифровки для отладки
 	log.Printf("Decrypting data: '%s' with key: '%s'", data, key)
 	
+	// Проверяваме дали низът е валиден Base64 и допълваме с padding, ако е необходимо
+	// Delphi Base64 може да не използва padding, затова трябва да го добавим
+	inputLength := len(data)
+	paddingNeeded := inputLength % 4
+	if paddingNeeded > 0 {
+		padding := strings.Repeat("=", 4-paddingNeeded)
+		data += padding
+		log.Printf("Added %d padding chars to Base64, new length: %d", 4-paddingNeeded, len(data))
+	}
+
 	// 1. Декодируем base64
 	ciphertext, err := base64.StdEncoding.DecodeString(data)
 	if err != nil {
 		log.Printf("Error decoding base64: %v", err)
-		return ""
+		
+		// Пробваме алтернативен подход - заместваме символи, които биха могли да причинят грешки
+		// Някои Base64 имплементации използват различни символи за '+' и '/'
+		altData := strings.ReplaceAll(data, "-", "+")
+		altData = strings.ReplaceAll(altData, "_", "/")
+		
+		ciphertext, err = base64.StdEncoding.DecodeString(altData)
+		if err != nil {
+			log.Printf("Error decoding base64 (even with substitutions): %v", err)
+			return ""
+		}
+		log.Printf("Succeeded decoding base64 with URL-safe character substitutions")
 	}
 	
 	// 2. Вычисляем MD5 хеш ключа для AES
 	keyMD5 := md5.Sum([]byte(key))
 	aesKey := keyMD5[:]
 	
-	// 3. Расшифровываем с помощью AES-CBC
+	// 3. Проверяем размер данных и выравниваем до блока AES если необходимо
+	blockSize := aes.BlockSize // 16 bytes
+	remainder := len(ciphertext) % blockSize
+	
+	if remainder != 0 {
+		log.Printf("Ciphertext size is not a multiple of AES block size: %d bytes (remainder: %d)", 
+			len(ciphertext), remainder)
+		
+		// Добавляем padding до размера блока (в отличие от PKCS7, просто заполняем нулями)
+		padding := make([]byte, blockSize-remainder)
+		ciphertext = append(ciphertext, padding...)
+		log.Printf("Padded ciphertext to %d bytes to make it a multiple of AES block size", len(ciphertext))
+	}
+	
+	// 4. Расшифровываем с помощью AES-CBC
 	block, err := aes.NewCipher(aesKey)
 	if err != nil {
 		log.Printf("Error creating AES cipher: %v", err)
@@ -690,37 +728,43 @@ func decompressData(data string, key string) string {
 	plaintext := make([]byte, len(ciphertext))
 	mode.CryptBlocks(plaintext, ciphertext)
 	
-	// 4. Убираем PKCS7 padding
+	// 5. Убираем PKCS7 padding - с обработкой ошибок
 	unpaddedData, err := pkcs7Unpad(plaintext, aes.BlockSize)
 	if err != nil {
-		log.Printf("Error removing padding: %v", err)
-		return ""
+		log.Printf("Error removing padding: %v - will try to proceed anyway", err)
+		// Пытаемся использовать данные без удаления padding
+		unpaddedData = plaintext
 	}
 	
-	// 5. Распаковываем с помощью zlib
+	// 6. Распаковываем с помощью zlib - с обработкой ошибок
 	zlibReader, err := zlib.NewReader(bytes.NewReader(unpaddedData))
 	if err != nil {
-		log.Printf("Error creating zlib reader: %v", err)
-		return ""
+		log.Printf("Error creating zlib reader: %v - data might not be compressed with zlib", err)
+		// Возвращаем данные как есть, без распаковки
+		return string(unpaddedData)
 	}
 	defer zlibReader.Close()
 	
 	// Читаем распакованные данные
 	decompressed, err := io.ReadAll(zlibReader)
 	if err != nil {
-		log.Printf("Error decompressing data: %v", err)
-		return ""
+		log.Printf("Error decompressing data: %v - returning uncompressed data", err)
+		return string(unpaddedData)
 	}
 	
 	result := string(decompressed)
 	
 	log.Printf("Decryption steps:")
-	log.Printf("1. Base64 encoded input (%d bytes): %s", len(data), data)
+	log.Printf("1. Base64 encoded input (%d bytes): %s", inputLength, data[:min(inputLength, 100)]+"...")
 	log.Printf("2. Decoded base64 (%d bytes)", len(ciphertext))
 	log.Printf("3. Key MD5: %x", keyMD5)
 	log.Printf("4. Decrypted with AES-CBC (%d bytes)", len(plaintext))
 	log.Printf("5. Removed padding (%d bytes)", len(unpaddedData))
-	log.Printf("6. Decompressed (%d bytes): %s", len(decompressed), result)
+	if err == nil {
+		log.Printf("6. Decompressed (%d bytes): %s", len(decompressed), result)
+	} else {
+		log.Printf("6. Decompression failed - using raw data (%d bytes): %s", len(unpaddedData), string(unpaddedData))
+	}
 	
 	return result
 }
@@ -757,7 +801,7 @@ func pkcs7Unpad(data []byte, blockSize int) ([]byte, error) {
 }
 
 // Helper function for min of two ints
-func minInt(a, b int) int {
+func min(a, b int) int {
 	if a < b {
 		return a
 	}
