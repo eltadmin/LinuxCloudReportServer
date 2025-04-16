@@ -1,129 +1,247 @@
 # Linux Cloud Report Server
 
-A Linux port of the CloudTcpServer that supports communication with the BosTcpClient through encrypted commands.
+This project is a Linux-compatible implementation of the original Delphi-based CloudTcpServer, providing identical functionality. It serves as a drop-in replacement designed to run in Docker containers on Linux systems.
 
-## Overview
+## System Architecture
 
-This is a Python implementation of the report server that was originally written in Delphi for Windows. It implements the same protocol to maintain compatibility with existing clients.
+The system consists of three main components:
 
-The server uses:
-- AES (Rijndael) encryption for secure communication
-- Proper key generation that matches the Delphi implementation
-- Full support for all required client commands
-- Support for both TCP communication
+1. **Report Server** - A Python-based TCP and HTTP server that handles client connections and communication
+2. **Web Interface** - A PHP 8 application (dreport) that provides a web UI for report management
+3. **Database** - A MySQL database storing reports and client information
 
-## Features
+The entire solution is containerized with Docker for easy deployment and management.
 
-- **Encryption**: Implements AES-CBC encryption with PKCS#7 padding, matching the Delphi DCPcrypt implementation
-- **Key generation**: Correctly generates cryptographic keys using the format: `serverKey + dictEntryPart + hostFirstChars + hostLastChar`
-- **Command handling**: Supports INIT, INFO, PING, VERS, ERRL, and DWNL commands
-- **Logging**: Comprehensive logging with rotation for troubleshooting
+## Components
 
-## Requirements
+### Report Server (Python)
 
-- Python 3.8 or higher
-- PyCryptodome for AES encryption
-- Other dependencies listed in requirements.txt
+The Report Server is implemented in Python and provides the following functionality:
 
-## Installation
+- **TCP Server**: Handles client connections using the same protocol as the original Delphi server
+- **HTTP Server**: Provides REST API endpoints for report generation and file downloads
+- **Database Interface**: Connects to MySQL database for storing and retrieving reports
 
-1. Clone the repository
-2. Install dependencies: `pip install -r requirements.txt`
+#### TCP Protocol
 
-## Usage
+The TCP server implements a custom protocol with the following commands:
 
-Run the server:
+- `INIT` - Initialize connection and negotiate encryption key
+- `INFO` - Exchange client information and authentication
+- `PING` - Keep-alive mechanism
+- `SRSP` - Handle client responses to server requests
+- `GREQ` - Generate reports based on client parameters
+- `VERS` - Check for updates and return file list
+- `DWNL` - Download update files
+- `ERRL` - Log client-side errors
 
-```bash
-python main.py --host 0.0.0.0 --port 8080 --log-level INFO
-```
+The communication is secured using a custom encryption mechanism based on a shared cryptographic key negotiated during initialization.
 
-### Command-line arguments
+#### HTTP API
 
-- `--host`: Host IP to bind to (default: 0.0.0.0)
-- `--port`: Port number to listen on (default: 8080)
-- `--log-level`: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL, default: INFO)
+The HTTP server provides the following endpoints:
 
-## Protocol Documentation
+- `/` - Server status information
+- `/status` - Detailed status including client count and configuration
+- `/report` - Generate reports based on parameters
+- `/updates` - List available update files
+- `/download/{filename}` - Download update files
 
-The server implements the following communication protocol:
+All endpoints except for the root require basic authentication.
 
-### Initialization (INIT)
+### Web Interface (PHP 8)
 
-Client sends:
-```
-INIT ID=<client_id>
-```
+The web interface is located in the `dreport` directory and provides a user-friendly way to:
 
-Server responds:
-```
-200-KEY=<server_key>
-200 LEN=<key_length>
-```
+- View and manage reports
+- Monitor client connections
+- Configure server settings
+- Manage update files
 
-Where:
-- `<server_key>`: Typically "D5F2"
-- `<key_length>`: 1 for most client IDs, 2 for ID=9
+### Database
 
-The cryptographic key is generated as:
-`serverKey + dictEntryPart + hostFirstChars + hostLastChar`
+The database schema is defined in the `dreports(8).sql` file and contains tables for:
 
-### Info Request (INFO)
+- Reports
+- Clients
+- User accounts
+- Configuration settings
 
-Client sends:
-```
-INFO DATA=<encrypted_data>
-```
+## Configuration
 
-Server responds:
-```
-200 OK
-DATA=<encrypted_response>
-```
+The server is configured using the `eboCloudReportServer.ini` file in the `config` directory. This file contains settings for:
 
-The encrypted response contains essential client information including:
-- TT=Test (validation field)
-- ID (client ID)
-- EX (expiry date)
-- EN (enabled status)
-- CD (creation date)
-- CT (creation time)
+- TCP and HTTP interfaces and ports
+- Authentication settings
+- Update folder location
+- Logging configuration
 
-### Other Commands
+Environment variables can be used to override configuration settings:
 
-- `PING`: Server responds with "PONG"
-- `VERS`: Returns version information
-- `ERRL`: Handles error reports from clients
-- `DWNL`: Handles file download requests
+- `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` - Database connection
+- `AUTH_SERVER_URL` - Authentication server URL
+
+## Docker Deployment
+
+The system is deployed using Docker Compose with three services:
+
+1. `report_server` - The Python-based TCP/HTTP server
+2. `web` - Apache/PHP web server for the dreport interface
+3. `db` - MySQL database server
 
 ## Security
 
-The server uses AES encryption with:
-- MD5 hash of the key for the AES key
-- Zero IV vector
-- PKCS#7 padding
+- Communication between clients and server is encrypted using a custom protocol
+- HTTP endpoints require basic authentication
+- Database credentials are managed through environment variables
 
-## Development
+## Logging and Monitoring
 
-### Project Structure
+- The server uses rotating logs stored in the `logs` directory
+- Log files are rotated when they reach 10MB, with up to 10 backup files
+- Health checks are performed periodically and logged
+- Old logs and update files are automatically cleaned up after 30 days
 
-- `main.py`: Entry point for the server
-- `server/`: Core server implementation
-  - `server.py`: Main server orchestration
-  - `tcp_server.py`: TCP server implementation  
-  - `crypto.py`: Encryption/decryption implementation
-  - `key_manager.py`: Key generation and management
-  - `message_handler.py`: Message formatting and parsing
-  - `constants.py`: Protocol constants and configuration
+## Error Handling
 
-### Testing
+The server includes robust error handling for:
 
-Run tests using pytest:
+- Database connectivity issues with automatic reconnection
+- Network failures and timeouts
+- Malformed client requests
+- File system errors
 
-```bash
-pytest
+## Interacting with Original Client
+
+The BosTcpClient application can connect to this server exactly as it did to the original Delphi server. The protocol implementation ensures backward compatibility.
+
+## Directory Structure
+
+```
+LinuxCloudReportServer/
+├── config/
+│   └── eboCloudReportServer.ini
+├── dreport/
+│   └── ... (PHP web interface)
+├── server/
+│   ├── __init__.py
+│   ├── constants.py
+│   ├── crypto.py
+│   ├── db.py
+│   ├── http_server.py
+│   ├── server.py
+│   └── tcp_server.py
+├── .env
+├── docker-compose.yml
+├── Dockerfile.php
+├── Dockerfile.server
+├── main.py
+├── php.ini
+├── README.md
+└── setup.py
 ```
 
-## License
+## Starting the Server
 
-Proprietary software - all rights reserved. 
+To start the server, run:
+
+```bash
+docker-compose up -d
+```
+
+This will start all three containers and make the services available on their configured ports:
+
+- TCP Server: Port 8016
+- HTTP Server: Port 8080
+- Web Interface: http://localhost:8015/dreport/
+
+## Testing with Original Client
+
+To test the server with the original BosTcpClient:
+
+1. Ensure the server is running
+2. Configure the client to connect to the server IP address on port 8016
+3. The client should connect and function normally
+
+## Troubleshooting
+
+Common issues and solutions:
+
+- **Database connection failures**: Check environment variables and network connectivity
+- **HTTP authentication issues**: Verify credentials in eboCloudReportServer.ini
+- **Client connection problems**: Ensure TCP port 8016 is accessible
+- **File permission errors**: Check volume mounts in docker-compose.yml
+
+## Maintenance
+
+Regular maintenance tasks:
+
+- Check logs for errors
+- Monitor disk usage
+- Back up the database regularly
+- Update security certificates if used
+
+For detailed implementation information, refer to the code comments in each component file.
+
+## Using the Go TCP Server
+
+The project now includes a Go-based TCP server implementation that exactly matches the Windows server's TCP protocol format. This is especially important for the INIT command response format, which needs to be compatible with the Delphi client.
+
+### Why Use the Go TCP Server?
+
+The Go TCP server implementation provides:
+
+1. Better format compatibility with the Windows server
+2. Improved performance and memory efficiency
+3. Lower latency for client connections
+4. Native handling of TCP connections without Python's overhead
+
+### How to Use the Go TCP Server
+
+#### With Docker Compose:
+
+The `docker-compose.yml` file has been updated to include the Go TCP server. To use it:
+
+```bash
+# Start all services with the Go TCP server
+docker-compose up -d
+```
+
+#### Standalone Usage:
+
+You can also build and run the Go TCP server directly:
+
+```bash
+# On Linux
+chmod +x start_go_server.sh
+./start_go_server.sh
+
+# On Windows
+start_go_server.bat
+```
+
+#### Building Manually:
+
+```bash
+# Build the Go server
+go build -o tcp_server go_tcp_server.go
+
+# Run the server
+./tcp_server
+```
+
+### Configuration
+
+The Go TCP server reads the following environment variables:
+
+- `TCP_HOST`: TCP interface to listen on (default: 0.0.0.0)
+- `TCP_PORT`: TCP port to listen on (default: 8016)
+
+### Disabling the Python TCP Server
+
+When using the Go TCP server, you should disable the Python TCP server to avoid port conflicts. This is automatically handled in the Docker Compose setup, but if you're running the Python server manually, set the `DISABLE_TCP_SERVER` environment variable:
+
+```bash
+export DISABLE_TCP_SERVER=true
+python -m main
+``` 
