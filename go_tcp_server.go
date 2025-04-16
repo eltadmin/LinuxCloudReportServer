@@ -430,11 +430,9 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	// Вземи елемента от речника (коригирай индекса за Go, който индексира от 0)
 	dictEntry := CRYPTO_DICTIONARY[dictIndex-1]
 	
-	// Вземи само първите N символа, където N е стойността на LEN, който изпращаме
-	cryptoDictPart := dictEntry
-	if len(dictEntry) > lenValue {
-		cryptoDictPart = dictEntry[:lenValue]
-	}
+	// Използваме само стойността на ID като част от ключа, а не първите N символа от речника
+	// Причината е, че много е вероятно Delphi кода да използва стойността на ID директно
+	cryptoDictPart := idValue
 	
 	// Extract host parts for key generation
 	hostFirstChars := ""
@@ -457,6 +455,8 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	// DEBUG PRINT DETAILED INFORMATION
 	log.Printf("=========== INIT RESPONSE DETAILS ===========")
 	log.Printf("ID Value: '%s' => Dictionary Index: %d", idValue, dictIndex)
+	log.Printf("Crypto ID Part Used: '%s'", cryptoDictPart)
+	log.Printf("Dictionary Entry [%d]: '%s' (not used directly)", dictIndex, dictEntry)
 	log.Printf("Server Key: '%s'", serverKey)
 	log.Printf("LEN Value: %d", lenValue)
 	log.Printf("Response (text): '%s'", response)
@@ -678,6 +678,8 @@ func decompressData(data string, key string) string {
 	// Проверяваме дали низът е валиден Base64 и допълваме с padding, ако е необходимо
 	// Delphi Base64 може да не използва padding, затова трябва да го добавим
 	inputLength := len(data)
+	
+	// В някои имплементации на Base64 '=' padding може да е заменен с други символи
 	paddingNeeded := inputLength % 4
 	if paddingNeeded > 0 {
 		padding := strings.Repeat("=", 4-paddingNeeded)
@@ -685,22 +687,43 @@ func decompressData(data string, key string) string {
 		log.Printf("Added %d padding chars to Base64, new length: %d", 4-paddingNeeded, len(data))
 	}
 
-	// 1. Декодируем base64
+	// Първо опитваме стандартен Base64
 	ciphertext, err := base64.StdEncoding.DecodeString(data)
 	if err != nil {
-		log.Printf("Error decoding base64: %v", err)
+		log.Printf("Error with standard base64 decoding: %v", err)
 		
-		// Пробваме алтернативен подход - заместваме символи, които биха могли да причинят грешки
-		// Някои Base64 имплементации използват различни символи за '+' и '/'
+		// Опит 2: URL Safe Base64 варианта (замества + и / с - и _)
 		altData := strings.ReplaceAll(data, "-", "+")
 		altData = strings.ReplaceAll(altData, "_", "/")
 		
 		ciphertext, err = base64.StdEncoding.DecodeString(altData)
 		if err != nil {
-			log.Printf("Error decoding base64 (even with substitutions): %v", err)
-			return ""
+			log.Printf("Error with URL safe base64 decoding: %v", err)
+			
+			// Опит 3: Премахваме нестандартни символи и опитваме отново
+			cleaned := ""
+			for _, c := range data {
+				if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '=' {
+					cleaned += string(c)
+				}
+			}
+			
+			// Уверяваме се, че имаме валидна дължина
+			cleanedLen := len(cleaned)
+			if cleanedLen % 4 != 0 {
+				needed := 4 - (cleanedLen % 4)
+				cleaned += strings.Repeat("=", needed)
+			}
+			
+			ciphertext, err = base64.StdEncoding.DecodeString(cleaned)
+			if err != nil {
+				log.Printf("All base64 decoding attempts failed, last error: %v", err)
+				return ""
+			}
+			log.Printf("Succeeded decoding base64 after cleaning non-standard chars")
+		} else {
+			log.Printf("Succeeded decoding base64 with URL-safe character substitutions")
 		}
-		log.Printf("Succeeded decoding base64 with URL-safe character substitutions")
 	}
 	
 	// 2. Вычисляем SHA1 хеш ключа (именно так делает Delphi в DCPcrypt.pas)
