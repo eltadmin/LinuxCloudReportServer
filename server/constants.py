@@ -2,6 +2,9 @@
 Constants for the Report Server
 """
 
+# Default server key as specified in the requirements
+DEFAULT_SERVER_KEY = "D5F2"
+
 # Dictionary used for crypto key generation - must match client dictionary exactly
 CRYPTO_DICTIONARY = [
     '123hk12h8dcal',
@@ -16,13 +19,35 @@ CRYPTO_DICTIONARY = [
     '987sX&sysy891'
 ] 
 
+# Special hardcoded keys for specific client IDs
+SPECIAL_KEYS = {
+    5: "D5F2cNE-",  # Special key for ID=5
+    9: "D5F22NE-"   # Special key for ID=9
+}
+
+# Key length by client ID
+KEY_LENGTH_BY_ID = {
+    9: 2,  # Use first 2 characters from dictionary entry
+}
+# Default key length is 1 for all other IDs
+
 # Response format for INIT command
-# 1 = Text key=value\r\nkey=value
-# 2 = Text key1=value1 key2=value2
-# 3 = Text as 1 with additional param (TIME=)
-# 4 = Text as 2 with additional param (TIME=)
-# 5 = Text key=value (without newlines)
-# 6 = Text key=value key=value (without newlines)
-# 7 = Binary Delphi TStringList.SaveToStream format (first byte = count, then strings separated by CRLF)
-# 8 = Binary format with length-prefixed strings (4 bytes count, then each string prefixed with 4 bytes length)
+# Format is: "200-KEY=xxx\r\n200 LEN=y\r\n"
+INIT_RESPONSE_FORMAT = "200-KEY={}\r\n200 LEN={}\r\n"
+
+# Command constants
+CMD_INIT = 'INIT'
+CMD_ERRL = 'ERRL'
+CMD_PING = 'PING'
+CMD_INFO = 'INFO'
+CMD_VERS = 'VERS'
+CMD_DWNL = 'DWNL'
+CMD_GREQ = 'GREQ'
+CMD_SRSP = 'SRSP'
+
+# Default response format for INFO command
 DEFAULT_RESP_FORMAT = 1 
+
+# Timeout constants (seconds)
+CONNECTION_TIMEOUT = 300  # 5 minutes
+INACTIVITY_CHECK_INTERVAL = 60  # 1 minute 

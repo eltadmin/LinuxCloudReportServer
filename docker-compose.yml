@@ -1,81 +1,15 @@
-version: '3.8'
+version: '3'
 
 services:
-  db:
-    image: postgres:14-alpine
-    restart: always
-    environment:
-      POSTGRES_USER: ${DB_USER:-report}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-reportpass}
-      POSTGRES_DB: ${DB_NAME:-reports}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "${DB_PORT:-5433}:5432"
-    networks:
-      - report_network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-report}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  go_tcp_server:
+  report_server:
     build:
       context: .
-      dockerfile: Dockerfile.go
-    restart: always
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      DEBUG: ${DEBUG:-false}
-      TCP_HOST: 0.0.0.0
-      TCP_PORT: ${TCP_PORT:-7777}
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_USER: ${DB_USER:-report}
-      DB_PASSWORD: ${DB_PASSWORD:-reportpass}
-      DB_NAME: ${DB_NAME:-reports}
+      dockerfile: Dockerfile
+    container_name: linux_cloud_report_server
     ports:
-      - "${TCP_PORT:-7777}:7777"
-    networks:
-      - report_network
+      - "8080:8080"
     volumes:
       - ./logs:/app/logs
-
-  http_server:
-    build:
-      context: .
-      dockerfile: Dockerfile.http
-    restart: always
-    depends_on:
-      db:
-        condition: service_healthy
+    restart: unless-stopped
     environment:
-      DEBUG: ${DEBUG:-false}
-      HTTP_HOST: 0.0.0.0
-      HTTP_PORT: ${HTTP_PORT:-8000}
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_USER: ${DB_USER:-report}
-      DB_PASSWORD: ${DB_PASSWORD:-reportpass}
-      DB_NAME: ${DB_NAME:-reports}
-      CONFIG_PATH: /app/config/eboCloudReportServer.ini
-    ports:
-      - "${HTTP_PORT:-8000}:8000"
-    networks:
-      - report_network
-    volumes:
-      - ./config:/app/config
-      - ./logs:/app/logs
-      - ./uploads:/app/uploads
-      - ./templates:/app/templates
-      - ./static:/app/static
-
-volumes:
-  postgres_data:
-
-networks:
-  report_network:
-    driver: bridge 
+      - LOG_LEVEL=INFO 

@@ -1,26 +1,23 @@
-FROM golang:1.21-alpine
+FROM golang:1.21-alpine AS builder
 
 WORKDIR /app
 
-# Install required packages
-RUN apk add --no-cache gcc musl-dev
-
-# Copy go.mod and go.sum
-COPY go.mod .
-COPY go.sum* .
-
-# Download dependencies
-RUN go mod download
-RUN go get github.com/mattn/go-sqlite3
-
-# Copy source code
+# Copy the Go source file
 COPY go_tcp_server.go .
 
 # Build the Go application
-RUN go build -o go_tcp_server go_tcp_server.go
+RUN go build -o tcp_server go_tcp_server.go
 
-# Expose port
-EXPOSE 7777
+# Use a minimal Alpine image for the final container
+FROM alpine:latest
 
-# Run the application
-CMD ["./go_tcp_server"] 
+WORKDIR /app
+
+# Copy the binary from the builder stage
+COPY --from=builder /app/tcp_server .
+
+# Expose the TCP port
+EXPOSE 8016
+
+# Run the TCP server
+CMD ["./tcp_server"] 

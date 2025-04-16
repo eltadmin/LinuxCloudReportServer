@@ -1,0 +1,37 @@
+FROM python:3.9-slim-buster
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    default-libmysqlclient-dev \
+    build-essential \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy package files
+COPY setup.py .
+COPY server/ server/
+COPY main.py .
+COPY config/ /config/
+
+# Install pycryptodome explicitly
+RUN pip install pycryptodome>=3.15.0
+
+# Install the package
+RUN pip install -e .
+
+# Create necessary directories
+RUN mkdir -p /app/logs /app/updates
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV CONFIG_PATH=/config/eboCloudReportServer.ini
+ENV PYTHONPATH=/app
+
+# Expose ports
+EXPOSE 8016
+EXPOSE 8080
+
+# Run the server
+CMD ["python", "main.py"] 
