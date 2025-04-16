@@ -600,7 +600,6 @@ func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, err
 	
 	// Parse parameters from decrypted data - handle various formats
 	params := make(map[string]string)
-	validCredentials := false
 	
 	if decryptedData != "" {
 		// Try multiple separators: \r\n, \n, or ;
@@ -622,9 +621,9 @@ func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, err
 					log.Printf("Extracted parameter: %s = %s", key, value)
 					foundParams = true
 					
-					// Look for specific auth parameters
+					// Log if we find authentication parameters
 					if key == "USR" || key == "USER" || key == "UID" {
-						validCredentials = true
+						log.Printf("Found authentication parameter: %s", key)
 					}
 				}
 			}
