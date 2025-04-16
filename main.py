@@ -1,79 +1,81 @@
-import asyncio
-import logging
+#!/usr/bin/env python3
+"""
+Linux Cloud Report Server - Main Entry Point
+This server is now primarily for HTTP functionality.
+The TCP server has been moved to the Go implementation.
+"""
+
 import os
-from pathlib import Path
-from configparser import ConfigParser
-from server.server import ReportServer
+import sys
+import logging
 import logging.handlers
-import time
+import signal
+import argparse
+from server.server import Server
 
-# Configure logging with rotation
-log_dir = Path('logs')
-log_dir.mkdir(exist_ok=True)
+# Configure logging
+def setup_logging(debug=False):
+    log_level = logging.DEBUG if debug else logging.INFO
+    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    
+    # Create logs directory if it doesn't exist
+    os.makedirs('logs', exist_ok=True)
+    
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+    
+    # Console handler
+    console = logging.StreamHandler()
+    console.setLevel(log_level)
+    console.setFormatter(logging.Formatter(log_format))
+    root_logger.addHandler(console)
+    
+    # File handler with rotation
+    file_handler = logging.handlers.RotatingFileHandler(
+        'logs/server.log',
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5
+    )
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(logging.Formatter(log_format))
+    root_logger.addHandler(file_handler)
+    
+    return root_logger
 
-# Create formatter
-log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-
-# Create rotating file handler (10MB per file, keep 10 files maximum)
-rotating_handler = logging.handlers.RotatingFileHandler(
-    'logs/server.log',
-    maxBytes=10*1024*1024,  # 10MB
-    backupCount=10,
-    encoding='utf-8'
-)
-rotating_handler.setFormatter(log_formatter)
-
-# Create console handler
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(log_formatter)
-
-# Configure root logger
-logging.basicConfig(
-    level=logging.INFO,
-    handlers=[rotating_handler, console_handler]
-)
-
-logger = logging.getLogger(__name__)
-
-def load_config(config_path: str) -> ConfigParser:
-    """Load server configuration from INI file."""
-    config = ConfigParser()
-    config.read(config_path)
-    return config
-
-async def main():
-    """Main entry point for the server."""
+def main():
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Linux Cloud Report Server (HTTP only)')
+    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
+    args = parser.parse_args()
+    
+    # Setup logging
+    logger = setup_logging(debug=args.debug)
+    logger.info("Starting Linux Cloud Report Server (HTTP Only - Go TCP Server)")
+    
+    # Create server instance
+    server = Server()
+    
+    # Handle graceful shutdown
+    def signal_handler(sig, frame):
+        logger.info(f"Received signal {sig}, shutting down...")
+        server.stop()
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     try:
-        start_time = time.time()
-        logger.info("Starting Linux Cloud Report Server...")
+        # Start the server
+        server.start()
+        logger.info("Server started successfully")
         
-        # Load configuration
-        config_path = Path(os.getenv('CONFIG_PATH', 'config/eboCloudReportServer.ini'))
-        if not config_path.exists():
-            raise FileNotFoundError(f"Configuration file not found: {config_path}")
-        
-        config = load_config(str(config_path))
-        
-        # Create and start server
-        server = ReportServer(config)
-        await server.start()
-        
-        logger.info(f"Server started successfully in {time.time() - start_time:.2f} seconds")
-        
-        # Keep the server running
+        # Keep main thread alive
         while True:
-            await asyncio.sleep(1)
-            
+            signal.pause()
     except Exception as e:
-        logger.error(f"Server error: {e}", exc_info=True)
-        raise
+        logger.error(f"Server failed to start: {e}", exc_info=True)
+        sys.exit(1)
 
-if __name__ == '__main__':
-    try:
-        logger.info("Starting server process")
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Server shutdown requested")
-    except Exception as e:
-        logger.error(f"Fatal error: {e}", exc_info=True)
-        raise 
+if __name__ == "__main__":
+    main() 

@@ -1,20 +1,25 @@
-FROM golang:1.21-alpine as builder
+FROM golang:1.21-alpine
 
-# Install build dependencies for SQLite
+WORKDIR /app
+
+# Install required packages
 RUN apk add --no-cache gcc musl-dev
 
-WORKDIR /app
-COPY go_tcp_server.go .
-COPY go.mod go.sum ./
+# Copy go.mod and go.sum
+COPY LinuxCloudReportServer/go.mod .
+COPY LinuxCloudReportServer/go.sum* .
 
-# Download dependencies and build the app
+# Download dependencies
 RUN go mod download
-RUN go build -o tcp_server go_tcp_server.go
 
-FROM alpine:latest
-WORKDIR /app
-COPY --from=builder /app/tcp_server .
-COPY dictionary.db ./
+# Copy source code
+COPY LinuxCloudReportServer/go_tcp_server.go .
 
-EXPOSE 8016
-CMD ["./tcp_server"] 
+# Build the Go application
+RUN go build -o go_tcp_server go_tcp_server.go
+
+# Expose port
+EXPOSE 7777
+
+# Run the application
+CMD ["./go_tcp_server"] 

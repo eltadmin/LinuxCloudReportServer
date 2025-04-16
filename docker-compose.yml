@@ -1,87 +1,81 @@
-version: '3'
+version: '3.8'
 
 services:
+  db:
+    image: postgres:14-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-report}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-reportpass}
+      POSTGRES_DB: ${DB_NAME:-reports}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${DB_PORT:-5433}:5432"
+    networks:
+      - report_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-report}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   go_tcp_server:
     build:
       context: .
       dockerfile: Dockerfile.go
     restart: always
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
-      - TCP_HOST=0.0.0.0
-      - TCP_PORT=8016
-      - DB_PATH=/app/dictionary.db
-      - DEBUG_MODE=true
+      DEBUG: ${DEBUG:-false}
+      TCP_HOST: 0.0.0.0
+      TCP_PORT: ${TCP_PORT:-7777}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-report}
+      DB_PASSWORD: ${DB_PASSWORD:-reportpass}
+      DB_NAME: ${DB_NAME:-reports}
     ports:
-      - "8016:8016"
+      - "${TCP_PORT:-7777}:7777"
+    networks:
+      - report_network
     volumes:
-      - ./dictionary.db:/app/dictionary.db
-
-  report_server:
-    build:
-      context: .
-      dockerfile: Dockerfile.server
-    ports:
-      - "8080:8080"  # HTTP server only (TCP handled by Go server)
-    volumes:
-      - ./server:/app/server
-      - ./config:/config
       - ./logs:/app/logs
-      - ./Updates:/app/updates
-    environment:
-      - DB_HOST=db
-      - DB_USER=dreports
-      - DB_PASSWORD=dreports
-      - DB_NAME=dreports
-      - AUTH_SERVER_URL=http://web:8015/dreport/api.php
-      - PYTHONPATH=/app
-      - INIT_RESPONSE_FORMAT=${INIT_RESPONSE_FORMAT:-1}
-      - DISABLE_TCP_SERVER=true  # Disable the Python TCP server
-    depends_on:
-      db:
-        condition: service_healthy
-      web:
-        condition: service_started
 
-  web:
+  http_server:
     build:
       context: .
-      dockerfile: Dockerfile.php
-    ports:
-      - "8015:8015"
-    volumes:
-      - ./dreport:/var/www/html/dreport
-      - php_vendor:/var/www/html/dreport/protected/slim/vendor
-    environment:
-      - DB_HOST=db
-      - DB_USER=dreports
-      - DB_PASSWORD=dreports
-      - DB_NAME=dreports
-      - MYSQL_HOST=db
-      - MYSQL_USER=dreports
-      - MYSQL_PASSWORD=dreports
-      - MYSQL_DATABASE=dreports
+      dockerfile: Dockerfile.http
+    restart: always
     depends_on:
       db:
         condition: service_healthy
-
-  db:
-    image: mysql:8.0
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql_data:/var/lib/mysql
-      - ./dreports(8).sql:/docker-entrypoint-initdb.d/init.sql
     environment:
-      - MYSQL_DATABASE=dreports
-      - MYSQL_USER=dreports
-      - MYSQL_PASSWORD=dreports
-      - MYSQL_ROOT_PASSWORD=rootpass
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      DEBUG: ${DEBUG:-false}
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: ${HTTP_PORT:-8000}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-report}
+      DB_PASSWORD: ${DB_PASSWORD:-reportpass}
+      DB_NAME: ${DB_NAME:-reports}
+      CONFIG_PATH: /app/config/eboCloudReportServer.ini
+    ports:
+      - "${HTTP_PORT:-8000}:8000"
+    networks:
+      - report_network
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+      - ./templates:/app/templates
+      - ./static:/app/static
 
 volumes:
-  mysql_data:
-  php_vendor: 
+  postgres_data:
+
+networks:
+  report_network:
+    driver: bridge 
