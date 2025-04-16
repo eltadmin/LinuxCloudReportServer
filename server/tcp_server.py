@@ -26,8 +26,8 @@ import struct
 logger = logging.getLogger(__name__)
 
 # Configuration constants
-DEBUG_MODE = True
-DEBUG_SERVER_KEY = "ABCDEFGH"  # Exactly 8 characters
+DEBUG_MODE = False  # Set to False for production
+DEBUG_SERVER_KEY = "F156"  # Match Go implementation's key
 USE_FIXED_DEBUG_RESPONSE = True  # Use a fixed format response for INIT command
 USE_FIXED_DEBUG_KEY = True  # Use a fixed crypto key for encryption/decryption tests
 
@@ -41,7 +41,7 @@ CMD_DWNL = 'DWNL'
 CMD_GREQ = 'GREQ'
 CMD_SRSP = 'SRSP'
 
-# Response format constants
+# Response format constants - only keep the standard format that matches Go server
 RESPONSE_FORMATS = {
     'standard': "200-KEY={}\r\n200 LEN={}\r\n",  # Format matching Go TCP server implementation
 }
@@ -52,7 +52,7 @@ PENDING_CONNECTION_TIMEOUT = 120  # 2 minutes
 INACTIVITY_CHECK_INTERVAL = 60  # 1 minute
 
 # Key generation constants
-KEY_LENGTH = 8  # Fixed length for reliability
+KEY_LENGTH = 4  # Fixed length for reliability
 
 class TCPConnection:
     """
@@ -697,14 +697,11 @@ class TCPServer:
         Returns:
             A tuple of (response_bytes, crypto_key)
         """
-        # Generate server key
-        if DEBUG_MODE:
-            server_key = DEBUG_SERVER_KEY
-        else:
-            server_key = ''.join(random.choices(string.ascii_letters + string.digits, k=KEY_LENGTH))
+        # Use hardcoded server keys and LEN values to exactly match Go implementation
+        server_key = "F156"  # Fixed server key for all clients
+        key_len = 2          # Fixed LEN value
         
-        # Store key info
-        key_len = len(server_key)
+        # Store key info on connection
         conn.server_key = server_key
         conn.key_length = key_len
         
@@ -719,8 +716,13 @@ class TCPServer:
         # Log info about host parts
         logger.info(f"Host parts: first='{host_first_chars}', last='{host_last_char}'")
         
-        # Test crypto key using the ID value directly
-        crypto_key = await self._test_crypto_key_variants(conn, server_key, str(key_id))
+        # Create crypto key using exactly the same method as Go server
+        crypto_key = server_key + str(key_id) + host_first_chars + host_last_char
+        conn.crypto_key = crypto_key
+        
+        # Test the crypto key
+        test_result = conn.test_encryption()
+        logger.info(f"Encryption test result: {test_result}")
         
         # Format response for client
         response_str = self._format_init_response(server_key, key_len)

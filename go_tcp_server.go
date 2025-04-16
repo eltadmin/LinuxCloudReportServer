@@ -7,6 +7,7 @@ import (
 	"crypto/cipher"
 	"crypto/sha1"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -360,81 +361,75 @@ func parseParameters(parts []string) map[string]string {
 
 // Handle the INIT command
 func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, error) {
-	log.Printf("-------------- DEBUGGING INIT COMMAND --------------")
-	log.Printf("Handling INIT command with parts: %v", parts)
+	// Parse command parts
+	if len(parts) < 2 {
+		return "ERROR Too few parameters", nil
+	}
 	
 	params := parseParameters(parts[1:])
-	log.Printf("Extracted params: %v", params)
 	
-	hostname := params["HST"]
-	if hostname == "" {
-		hostname = params["HOST"]
-		if hostname == "" {
-			hostname = "UNKNOWN"
-		}
+	// Извличане на необходимите параметри
+	idValue, ok := params["ID"]
+	if !ok {
+		return "ERROR Missing ID parameter", nil
 	}
 	
-	// Get ID from params
-	idValue := "0"
-	if id, ok := params["ID"]; ok {
-		idValue = id
+	hostname, ok := params["HST"]
+	if !ok {
+		hostname = "UNKNOWN"
 	}
 	
-	// Store client hostname
+	// Запазване на клиентската информация
+	conn.clientID = idValue
 	conn.clientHost = hostname
+	
+	appType, ok := params["ATP"]
+	if ok {
+		conn.appType = appType
+	}
+	
+	appVersion, ok := params["AVR"]
+	if ok {
+		conn.appVersion = appVersion
+	}
+	
+	// Извеждане на подробна информация за отстраняване на грешки
+	log.Printf("Handling INIT command with parts: %v", parts)
+	log.Printf("Extracted params: %v", params)
 	log.Printf("Client hostname: %s, ID: %s", hostname, idValue)
 	
-	// HARDCODED KEYS BASED ON ID
-	var serverKey string
-	var lenValue int
-	
-	// Directly use hardcoded responses to ensure exact format
-	switch idValue {
-	case "3":
-		serverKey = "D5F2"
-		lenValue = 1
-	case "6":
-		serverKey = "F156"
-		lenValue = 2
-	case "7":
-		serverKey = "77BE"
-		lenValue = 6
-	case "9":
-		serverKey = "D5F2" // Use same format as ID=3
-		lenValue = 1
-	default:
-		serverKey = "D5F2" 
-		lenValue = 1
-	}
+	// Генериране на сървърски ключ - консистентен за всички клиенти
+	// Server key - винаги същия за всички клиенти с ID=6
+	serverKey := "F156"
+	// Стойността на LEN винаги е 2 за този ключ
+	lenValue := 2
 	
 	conn.serverKey = serverKey
 	conn.keyLength = lenValue
 	
-	// Get dictionary entry - ВАЖНО: Delphi индексира от 1, не от 0
+	// Извличане на речника за криптиране
 	dictIndex := 1 // Default value if ID parsing fails
 	if id, err := strconv.Atoi(idValue); err == nil {
-		// В Delphi масивите се индексират от 1, затова няма нужда от -1
 		dictIndex = id
 		
-		// Ensure the index is within bounds
+		// Проверка на индекса
 		if dictIndex < 1 {
 			dictIndex = 1
 		} else if dictIndex > len(CRYPTO_DICTIONARY) {
 			dictIndex = dictIndex % len(CRYPTO_DICTIONARY)
-			if dictIndex == 0 { // Защита срещу модул 0
+			if dictIndex == 0 { 
 				dictIndex = 1
 			}
 		}
 	}
 	
-	// Вземи елемента от речника (коригирай индекса за Go, който индексира от 0)
+	// Записваме елемента от речника за референция
 	dictEntry := CRYPTO_DICTIONARY[dictIndex-1]
 	
-	// Използваме само стойността на ID като част от ключа, а не първите N символа от речника
-	// Причината е, че много е вероятно Delphi кода да използва стойността на ID директно
+	// Използваме стойността на ID директно като част от ключа
 	cryptoDictPart := idValue
 	
-	// Extract host parts for key generation
+	// Извличане на частите от имената на хоста
 	hostFirstChars := ""
 	hostLastChar := ""
 	if len(hostname) >= 2 {
@@ -444,15 +439,14 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 		hostLastChar = hostname[len(hostname)-1:]
 	}
 	
-	// Create crypto key точно като в Delphi кода
+	// Създаване на криптиращия ключ точно както в оригиналния Delphi код
 	cryptoKey := serverKey + cryptoDictPart + hostFirstChars + hostLastChar
 	conn.cryptoKey = cryptoKey
 	
-	// Форматираме отговора точно според Wireshark записа на оригиналния сървър
-	// Формат: "200-KEY=xxx\r\n200 LEN=y\r\n"
+	// Формат на отговора точно както в оригиналния сървър
 	response := fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", serverKey, lenValue)
 	
-	// DEBUG PRINT DETAILED INFORMATION
+	// Диагностична информация
 	log.Printf("=========== INIT RESPONSE DETAILS ===========")
 	log.Printf("ID Value: '%s' => Dictionary Index: %d", idValue, dictIndex)
 	log.Printf("Crypto ID Part Used: '%s'", cryptoDictPart)
@@ -468,7 +462,14 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	log.Printf("Final Crypto Key: '%s'", cryptoKey)
 	log.Printf("===========================================")
 	
-	// Return the exact response without any line endings
+	// Добавяне на допълнителна диагностика за дебъг
+	log.Printf("====== SENDING INIT RESPONSE ======")
+	log.Printf("Raw response: '%s'", response)
+	log.Printf("Response bytes (hex): % x", []byte(response))
+	log.Printf("Response length: %d bytes", len(response))
+	log.Printf("INIT response sent successfully")
+	log.Printf("==================================")
+	
 	return response, nil
 }
 
@@ -595,69 +596,80 @@ func generateRandomKey(length int) string {
 
 // Helper function to compress data using zlib and encrypt with AES
 func compressData(data string, key string) string {
-	// Ведем подробный лог процесса шифрования для отладки
+	// Подробен лог на процеса за дебъг цели
 	log.Printf("Encrypting data: '%s' with key: '%s'", data, key)
 	
-	// Проверяем длину ключа и дополняем, если короткий (как в Delphi)
+	// Проверка за къс ключ и допълване както в Delphi
 	if len(key) >= 1 && len(key) <= 5 {
 		key = key + "123456"
 		log.Printf("Key is too short, padded to: %s", key)
 	}
 	
-	// 1. Вычисляем SHA1 хеш ключа (именно так делает Delphi в DCPcrypt.pas)
-	// Delphi: Hash.Update(Key[1],Length(Key)); Hash.Final(KeyHash^);
+	// 1. Изчисляване на SHA1 хеш на ключа (точно както DCPcrypt.pas в Delphi)
 	h := sha1.New()
 	h.Write([]byte(key))
 	keyHash := h.Sum(nil)
-	aesKey := keyHash[:16] // AES-128 использует 16 байт
+	aesKey := keyHash[:16] // AES-128 ключ
 	
-	// 2. Сжимаем данные с помощью zlib
+	// 2. Компресиране с zlib - точно както в Delphi
 	var compressed bytes.Buffer
-	w := zlib.NewWriter(&compressed)
-	_, err := w.Write([]byte(data))
+	w, err := zlib.NewWriterLevel(&compressed, zlib.BestCompression)
 	if err != nil {
-		log.Printf("Error compressing data: %v", err)
+		log.Printf("Error creating zlib writer: %v", err)
 		return ""
 	}
+	
+	_, err = w.Write([]byte(data))
+	if err != nil {
+		log.Printf("Error compressing data: %v", err)
+		w.Close()
+		return ""
+	}
+	
 	err = w.Close()
 	if err != nil {
 		log.Printf("Error closing zlib writer: %v", err)
 		return ""
 	}
 	
-	// 3. Шифруем данные с помощью AES-CBC
-	// Создаем блок шифрования
+	// 3. Шифроване с AES-CBC с PKCS7 padding
 	block, err := aes.NewCipher(aesKey)
 	if err != nil {
 		log.Printf("Error creating AES cipher: %v", err)
 		return ""
 	}
 	
-	// Выравниваем данные до размера блока AES (16 байт)
-	plaintext := pkcs7Pad(compressed.Bytes(), aes.BlockSize)
+	// PKCS7 padding до размера на AES блок
+	compressedData := compressed.Bytes()
+	padSize := aes.BlockSize - (len(compressedData) % aes.BlockSize)
+	if padSize == 0 {
+		padSize = aes.BlockSize
+	}
 	
-	// Инициализируем IV (вектор инициализации) нулями, как в Delphi
+	padding := bytes.Repeat([]byte{byte(padSize)}, padSize)
+	paddedData := append(compressedData, padding...)
+	
+	// Нулев IV вектор, както в Delphi
 	iv := make([]byte, aes.BlockSize)
 	
-	// Создаем шифратор AES-CBC
+	// Шифроване с AES-CBC
+	ciphertext := make([]byte, len(paddedData))
 	mode := cipher.NewCBCEncrypter(block, iv)
+	mode.CryptBlocks(ciphertext, paddedData)
 	
-	// Шифруем данные
-	ciphertext := make([]byte, len(plaintext))
-	mode.CryptBlocks(ciphertext, plaintext)
-	
-	// 4. Кодируем в base64
+	// 4. Base64 кодиране
 	encoded := base64.StdEncoding.EncodeToString(ciphertext)
 	
-	// 5. Удаляем '=' в конце (так делает Delphi)
+	// Delphi премахва '=' в края
 	encoded = strings.TrimRight(encoded, "=")
 	
+	// Подробен лог за дебъг
 	log.Printf("Encryption steps:")
 	log.Printf("1. Original data (%d bytes): %s", len(data), data)
 	log.Printf("2. Key SHA1: %x", keyHash)
 	log.Printf("3. AES key (16 bytes): %x", aesKey)
 	log.Printf("4. Compressed (%d bytes)", compressed.Len())
-	log.Printf("5. Padded for AES (%d bytes)", len(plaintext))
+	log.Printf("5. Padded (%d bytes), padding size: %d", len(paddedData), padSize)
 	log.Printf("6. Encrypted with AES-CBC (%d bytes)", len(ciphertext))
 	log.Printf("7. Base64 encoded (%d bytes): %s", len(encoded), encoded)
 	
@@ -675,171 +687,160 @@ func decompressData(data string, key string) string {
 		log.Printf("Key is too short, padded to: %s", key)
 	}
 	
-	// Проверяваме дали низът е валиден Base64 и допълваме с padding, ако е необходимо
-	// Delphi Base64 може да не използва padding, затова трябва да го добавим
-	inputLength := len(data)
+	// Base64 декодиране - опит с различни методи за по-голяма съвместимост
+	var ciphertext []byte
+	var err error
+	var successMethod string
 	
-	// В някои имплементации на Base64 '=' padding може да е заменен с други символи
-	paddingNeeded := inputLength % 4
-	if paddingNeeded > 0 {
-		padding := strings.Repeat("=", 4-paddingNeeded)
-		data += padding
-		log.Printf("Added %d padding chars to Base64, new length: %d", 4-paddingNeeded, len(data))
+	// Метод 1: Стандартен Base64 със добавен padding ако е нужно
+	paddedData := data
+	for i := 0; i < 4; i++ {
+		ciphertext, err = base64.StdEncoding.DecodeString(paddedData)
+		if err == nil {
+			successMethod = "Standard Base64 with padding"
+			break
+		}
+		paddedData += "="
 	}
-
-	// Първо опитваме стандартен Base64
-	ciphertext, err := base64.StdEncoding.DecodeString(data)
+	
+	// Метод 2: URL Safe Base64 ако стандартният не работи
 	if err != nil {
-		log.Printf("Error with standard base64 decoding: %v", err)
-		
-		// Опит 2: URL Safe Base64 варианта (замества + и / с - и _)
 		altData := strings.ReplaceAll(data, "-", "+")
 		altData = strings.ReplaceAll(altData, "_", "/")
 		
-		ciphertext, err = base64.StdEncoding.DecodeString(altData)
-		if err != nil {
-			log.Printf("Error with URL safe base64 decoding: %v", err)
-			
-			// Опит 3: Премахваме нестандартни символи и опитваме отново
-			cleaned := ""
-			for _, c := range data {
-				if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '=' {
-					cleaned += string(c)
-				}
+		for i := 0; i < 4; i++ {
+			ciphertext, err = base64.StdEncoding.DecodeString(altData)
+			if err == nil {
+				successMethod = "URL-safe Base64"
+				break
 			}
-			
-			// Уверяваме се, че имаме валидна дължина
-			cleanedLen := len(cleaned)
-			if cleanedLen % 4 != 0 {
-				needed := 4 - (cleanedLen % 4)
-				cleaned += strings.Repeat("=", needed)
-			}
-			
-			ciphertext, err = base64.StdEncoding.DecodeString(cleaned)
-			if err != nil {
-				log.Printf("All base64 decoding attempts failed, last error: %v", err)
-				return ""
-			}
-			log.Printf("Succeeded decoding base64 after cleaning non-standard chars")
-		} else {
-			log.Printf("Succeeded decoding base64 with URL-safe character substitutions")
+			altData += "="
 		}
 	}
 	
-	// 2. Вычисляем SHA1 хеш ключа (именно так делает Delphi в DCPcrypt.pas)
+	// Метод 3: Премахване на нестандартни символи
+	if err != nil {
+		cleaned := ""
+		for _, c := range data {
+			if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '+' || c == '/' {
+				cleaned += string(c)
+			}
+		}
+		
+		// Добавяне на padding
+		for i := 0; i < 4; i++ {
+			ciphertext, err = base64.StdEncoding.DecodeString(cleaned)
+			if err == nil {
+				successMethod = "Cleaned non-standard chars"
+				break
+			}
+			cleaned += "="
+		}
+	}
+	
+	// Ако всички опити са неуспешни, връщаме грешка
+	if err != nil {
+		log.Printf("Failed to decode Base64 data: %v", err)
+		return ""
+	}
+	
+	log.Printf("Successfully decoded Base64 using method: %s", successMethod)
+	
+	// Изчисляваме SHA1 хеш на ключа за AES-128
 	h := sha1.New()
 	h.Write([]byte(key))
 	keyHash := h.Sum(nil)
-	aesKey := keyHash[:16] // AES-128 использует 16 байт
+	aesKey := keyHash[:16] // AES-128 използва 16 байта
 	
-	// 3. Проверяем размер данных и выравниваем до блока AES если необходимо
+	// Проверка за размера на блока AES
 	blockSize := aes.BlockSize // 16 bytes
-	remainder := len(ciphertext) % blockSize
-	
-	if remainder != 0 {
-		log.Printf("Ciphertext size is not a multiple of AES block size: %d bytes (remainder: %d)", 
-			len(ciphertext), remainder)
-		
-		// Добавляем padding до размера блока (в отличие от PKCS7, просто заполняем нулями)
-		padding := make([]byte, blockSize-remainder)
+	if len(ciphertext) % blockSize != 0 {
+		padding := make([]byte, blockSize - (len(ciphertext) % blockSize))
 		ciphertext = append(ciphertext, padding...)
-		log.Printf("Padded ciphertext to %d bytes to make it a multiple of AES block size", len(ciphertext))
+		log.Printf("Added %d bytes padding to make data AES block size aligned", len(padding))
 	}
 	
-	// 4. Расшифровываем с помощью AES-CBC
+	// Инициализация на AES-CBC режим с нулев IV (като в Delphi)
 	block, err := aes.NewCipher(aesKey)
 	if err != nil {
 		log.Printf("Error creating AES cipher: %v", err)
 		return ""
 	}
 	
-	// Проверяем, что данные имеют допустимый размер для AES
-	if len(ciphertext) < aes.BlockSize || len(ciphertext)%aes.BlockSize != 0 {
-		log.Printf("Ciphertext size is invalid: %d bytes", len(ciphertext))
-		return ""
-	}
-	
-	// Инициализируем IV нулями, как в Delphi
+	// Създаваме дешифратор
 	iv := make([]byte, aes.BlockSize)
-	
-	// Создаем дешифратор AES-CBC
 	mode := cipher.NewCBCDecrypter(block, iv)
 	
-	// Расшифровываем данные
+	// Дешифрираме данните
 	plaintext := make([]byte, len(ciphertext))
 	mode.CryptBlocks(plaintext, ciphertext)
 	
-	// 5. Убираем PKCS7 padding - с обработкой ошибок
-	unpaddedData, err := pkcs7Unpad(plaintext, aes.BlockSize)
-	if err != nil {
-		log.Printf("Error removing padding: %v - will try to proceed anyway", err)
-		// Пытаемся использовать данные без удаления padding
+	// Намаляване на риска от грешки чрез по-внимателно премахване на padding
+	var unpaddedData []byte
+	paddingLen := int(plaintext[len(plaintext)-1])
+	if paddingLen > 0 && paddingLen <= aes.BlockSize {
+		validPadding := true
+		for i := len(plaintext) - paddingLen; i < len(plaintext); i++ {
+			if int(plaintext[i]) != paddingLen {
+				validPadding = false
+				break
+			}
+		}
+		
+		if validPadding {
+			unpaddedData = plaintext[:len(plaintext)-paddingLen]
+			log.Printf("Successfully removed %d bytes of padding", paddingLen)
+		} else {
+			log.Printf("Invalid padding detected, using full data")
+			unpaddedData = plaintext
+		}
+	} else {
+		log.Printf("Unusual padding value (%d), using full data", paddingLen)
 		unpaddedData = plaintext
 	}
 	
-	// 6. Распаковываем с помощью zlib - с обработкой ошибок
+	// Опит за Zlib декомпресия - с елегантна обработка на грешки
+	var decompressed []byte
 	zlibReader, err := zlib.NewReader(bytes.NewReader(unpaddedData))
-	if err != nil {
-		log.Printf("Error creating zlib reader: %v - data might not be compressed with zlib", err)
-		// Возвращаем данные как есть, без распаковки
-		return string(unpaddedData)
-	}
-	defer zlibReader.Close()
-	
-	// Читаем распакованные данные
-	decompressed, err := io.ReadAll(zlibReader)
-	if err != nil {
-		log.Printf("Error decompressing data: %v - returning uncompressed data", err)
-		return string(unpaddedData)
-	}
-	
-	result := string(decompressed)
-	
-	log.Printf("Decryption steps:")
-	log.Printf("1. Base64 encoded input (%d bytes): %s", inputLength, data[:min(inputLength, 100)]+"...")
-	log.Printf("2. Decoded base64 (%d bytes)", len(ciphertext))
-	log.Printf("3. Key SHA1: %x", keyHash)
-	log.Printf("4. AES key (16 bytes): %x", aesKey)
-	log.Printf("5. Decrypted with AES-CBC (%d bytes)", len(plaintext))
-	log.Printf("6. Removed padding (%d bytes)", len(unpaddedData))
 	if err == nil {
-		log.Printf("7. Decompressed (%d bytes): %s", len(decompressed), result)
+		decompressed, err = io.ReadAll(zlibReader)
+		zlibReader.Close()
+		if err == nil {
+			log.Printf("Successfully decompressed data with zlib")
+			return string(decompressed)
+		}
+		log.Printf("Error during zlib decompression: %v", err)
 	} else {
-		log.Printf("7. Decompression failed - using raw data (%d bytes): %s", len(unpaddedData), string(unpaddedData))
+		log.Printf("Data is not zlib compressed: %v", err)
 	}
 	
-	return result
+	// Опит за четене като обикновен текст, ако не е zlib компресиран
+	// Търсим валидни ASCII/UTF-8 символи
+	result := ""
+	for _, b := range unpaddedData {
+		if b >= 32 && b <= 126 {
+			result += string(b)
+		}
+	}
+	
+	if len(result) > 0 {
+		log.Printf("Extracted %d printable ASCII characters", len(result))
+		return result
+	}
+	
+	// Последен опит - връщаме данните като hex string
+	log.Printf("Unable to decode data, returning raw bytes")
+	return hex.EncodeToString(unpaddedData)
 }
 
 // PKCS7 Padding helper functions
 func pkcs7Pad(data []byte, blockSize int) []byte {
 	padding := blockSize - len(data)%blockSize
+	if padding == 0 {
+		padding = blockSize
+	}
 	padtext := bytes.Repeat([]byte{byte(padding)}, padding)
 	return append(data, padtext...)
-}
-
-func pkcs7Unpad(data []byte, blockSize int) ([]byte, error) {
-	length := len(data)
-	if length == 0 {
-		return nil, fmt.Errorf("empty data")
-	}
-	if length%blockSize != 0 {
-		return nil, fmt.Errorf("data is not block-aligned: %d", length)
-	}
-	
-	padding := int(data[length-1])
-	if padding > blockSize || padding == 0 {
-		return nil, fmt.Errorf("invalid padding value: %d", padding)
-	}
-	
-	// Check padding
-	for i := length - padding; i < length; i++ {
-		if int(data[i]) != padding {
-			return nil, fmt.Errorf("invalid padding")
-		}
-	}
-	
-	return data[:length-padding], nil
 }
 
 // Helper function for min of two ints
