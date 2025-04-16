@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/md5"
 	"crypto/sha1"
 	"encoding/base64"
 	"fmt"
