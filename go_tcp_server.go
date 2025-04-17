@@ -103,6 +103,8 @@ type TCPConnection struct {
 	clientHST     string
 	clientATP     string
 	clientAVR     string
+	lastPing      time.Time
+	lastError     string
 }
 
 // TCPServer represents the TCP server
@@ -763,6 +765,11 @@ func (s *TCPServer) handleVersion(conn *TCPConnection, parts []string) (string, 
 	
 	log.Printf("Prepared version response data: %s", responseData)
 	
+	// Use parts parameter to avoid unused variable error
+	if len(parts) > 1 {
+		log.Printf("Version command parameters: %v", parts[1:])
+	}
+	
 	// Encrypt the response
 	encrypted := compressData(responseData, conn.cryptoKey)
 	if encrypted == "" {
@@ -798,6 +805,8 @@ func (s *TCPServer) handleReportRequest(conn *TCPConnection, parts []string) (st
 	
 	// Log request details for debugging
 	log.Printf("Report request received from client %s (ID=%s)", conn.conn.RemoteAddr(), conn.clientID)
+	log.Printf("Received parameters: %v", params) // Use params to avoid "declared and not used" error
+	
 	if hasData {
 		log.Printf("Report request includes data of length %d chars", len(data))
 		
