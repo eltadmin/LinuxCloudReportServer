@@ -19,46 +19,46 @@ services:
       web:
         condition: service_started
 
-  report_server:
-    build:
-      context: .
-      dockerfile: Dockerfile.server
-    ports:
-      - "8080:8080"  # HTTP server only (TCP handled by Go server)
-    volumes:
-      - ./server:/app/server
-      - ./config:/config
-      - ./logs:/app/logs
-      - ./Updates:/app/updates
-    environment:
-      - DB_HOST=db
-      - DB_USER=dreports
-      - DB_PASSWORD=dreports
-      - DB_NAME=dreports
-      - AUTH_SERVER_URL=http://web:8015/dreport/api.php
-      - PYTHONPATH=/app
-      - INIT_RESPONSE_FORMAT=${INIT_RESPONSE_FORMAT:-1}
-      - DISABLE_TCP_SERVER=true  # Disable the Python TCP server
-    depends_on:
-      db:
-        condition: service_healthy
-      web:
-        condition: service_started
+#  report_server:
+#    build:
+#      context: .
+#      dockerfile: Dockerfile.server
+#    ports:
+#      - "8080:8080"  # HTTP server only (TCP handled by Go server)
+#    volumes:
+#      - ./server:/app/server
+#      - ./config:/config
+#      - ./logs:/app/logs
+#      - ./Updates:/app/updates
+#    environment:
+#      - DB_HOST=db
+#      - DB_USER=dreports
+#      - DB_PASSWORD=dreports
+#      - DB_NAME=dreports
+#      - AUTH_SERVER_URL=http://web:8015/dreport/api.php
+#      - PYTHONPATH=/app
+#      - INIT_RESPONSE_FORMAT=${INIT_RESPONSE_FORMAT:-1}
+#      - DISABLE_TCP_SERVER=true  # Disable the Python TCP server
+#    depends_on:
+#      db:
+#        condition: service_healthy
+#      web:
+#        condition: service_started
 
-  proxy_server:
-    build:
-      context: .
-      dockerfile: Dockerfile.server
-    ports:
-      - "8017:8017"  # Proxy server port
-    volumes:
-      - ./server:/app/server
-      - ./:/app
-    command: python3 /app/tcp_proxy.py ${TARGET_HOST:-127.0.0.1} ${TARGET_PORT:-8016} 0.0.0.0 8017
-    environment:
-      - PYTHONPATH=/app
-    depends_on:
-      - go_tcp_server
+#  proxy_server:
+#    build:
+#      context: .
+#      dockerfile: Dockerfile.server
+#    ports:
+#      - "8017:8017"  # Proxy server port
+#    volumes:
+#      - ./server:/app/server
+#      - ./:/app
+#    command: python3 /app/tcp_proxy.py ${TARGET_HOST:-127.0.0.1} ${TARGET_PORT:-8016} 0.0.0.0 8017
+#    environment:
+#      - PYTHONPATH=/app
+#    depends_on:
+#      - go_tcp_server
 
   web:
     build:

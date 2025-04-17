@@ -1103,6 +1103,12 @@ func generateServerKeyIfNeeded() string {
 	log.Printf("No existing server key found, generating new key")
 	key := generateServerKey()
 	
+	// Make sure the directory exists before writing the file
+	keyDir := filepath.Dir(KEY_FILE)
+	if err := os.MkdirAll(keyDir, 0755); err != nil {
+		log.Printf("Warning: Failed to create key directory: %v", err)
+	}
+	
 	// Save the key to file for future use
 	err := os.WriteFile(KEY_FILE, []byte(key), 0644)
 	if err != nil {
