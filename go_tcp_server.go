@@ -611,9 +611,20 @@ func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, err
 	// Extract parameters from decrypted data
 	params := extractParameters(decryptedData)
 	
+	// Log extracted parameters for debugging
+	log.Printf("Extracted %d parameters from decrypted data", len(params))
+	
 	// Create response data exactly as expected by Delphi client
 	responseData := "TT=Test\r\n"
-	responseData += "ID=" + conn.clientID + "\r\n"
+	
+	// Use client ID from params if available, otherwise use the connection's client ID
+	if clientID, exists := params["ID"]; exists && clientID != "" {
+		responseData += "ID=" + clientID + "\r\n"
+		log.Printf("Using client ID from params: %s", clientID)
+	} else {
+		responseData += "ID=" + conn.clientID + "\r\n"
+	}
+	
 	responseData += "EX=321231\r\n"
 	responseData += "EN=true\r\n"
 	responseData += "CD=220101\r\n"
