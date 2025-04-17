@@ -850,7 +850,7 @@ func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, err
 					
 					// Add pattern-based keys
 					altKeys = append(altKeys,
-						serverKey + "T" + hostFirstChars + hostLastChar,
+						DEBUG_SERVER_KEY + "T" + hostFirstChars + hostLastChar,
 						"D5F2TNE-",
 						"D5F22NE-",
 						"D5F2" + hostFirstChars + hostLastChar,
