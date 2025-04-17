@@ -11,8 +11,10 @@ services:
       - TCP_HOST=0.0.0.0
       - TCP_PORT=8016
       - SERVER_DEBUG=true  # Added for debugging
+      - TZ=${TZ:-Europe/Sofia}  # Set timezone from host or default to Sofia
     volumes:
       - ./keys:/app/keys  # Volume for storing server keys
+      - /etc/localtime:/etc/localtime:ro  # Sync timezone with host
     depends_on:
       db:
         condition: service_healthy
@@ -69,6 +71,7 @@ services:
     volumes:
       - ./dreport:/var/www/html/dreport
       - php_vendor:/var/www/html/dreport/protected/slim/vendor
+      - /etc/localtime:/etc/localtime:ro  # Sync timezone with host
     environment:
       - DB_HOST=db
       - DB_USER=dreports
@@ -78,6 +81,7 @@ services:
       - MYSQL_USER=dreports
       - MYSQL_PASSWORD=dreports
       - MYSQL_DATABASE=dreports
+      - TZ=${TZ:-Europe/Sofia}  # Set timezone from host or default to Sofia
     depends_on:
       db:
         condition: service_healthy
@@ -89,11 +93,13 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
       - ./dreports(8).sql:/docker-entrypoint-initdb.d/init.sql
+      - /etc/localtime:/etc/localtime:ro  # Sync timezone with host
     environment:
       - MYSQL_DATABASE=dreports
       - MYSQL_USER=dreports
       - MYSQL_PASSWORD=dreports
       - MYSQL_ROOT_PASSWORD=rootpass
+      - TZ=${TZ:-Europe/Sofia}  # Set timezone from host or default to Sofia
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
