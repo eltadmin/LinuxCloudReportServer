@@ -277,9 +277,11 @@ func (s *TCPServer) handleConnection(conn *TCPConnection) {
 		if response != "" {
 			// Дали това е INIT отговор?
 			isInit := strings.HasPrefix(command, "INIT ")
+			isInfo := strings.HasPrefix(command, "INFO ")
+			isVers := strings.HasPrefix(command, "VERS ")
 			
-			// За не-INIT отговори добавяме \r\n накрая ако липсва
-			if !isInit && !strings.HasSuffix(response, "\r\n") {
+			// За не-специални отговори добавяме \r\n накрая ако липсва
+			if !isInit && !isInfo && !isVers && !strings.HasSuffix(response, "\r\n") {
 				response += "\r\n"
 			}
 			
@@ -357,11 +359,6 @@ func (s *TCPServer) handleCommand(conn *TCPConnection, command string) (string, 
 	case "INIT":
 		log.Printf("Handling INIT command from %s", conn.conn.RemoteAddr())
 		response, err = s.handleInit(conn, parts)
-		if err != nil {
-			log.Printf("Error handling INIT command: %v", err)
-			return fmt.Sprintf("ERROR %v", err), nil
-		}
-		log.Printf("INIT command processed successfully")
 	case "ERRL":
 		log.Printf("Handling ERROR command from %s", conn.conn.RemoteAddr())
 		response, err = s.handleError(conn, parts)
@@ -643,6 +640,8 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	}
 	
 	// Format the response exactly as expected by Delphi client
+	// From Wireshark logs: "200-KEY=30DF\r\n200 LEN=5\r\n"
+	// Note the dash after 200 in the first line and no dash in the second line
 	response := fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", conn.serverKey, lenValue)
 	
 	// Log key details for debugging
@@ -690,8 +689,8 @@ func (s *TCPServer) handlePing(conn *TCPConnection) (string, error) {
 	
 	log.Printf("Received PING from client %s (host: %s)", conn.conn.RemoteAddr(), conn.clientHost)
 	
-	// Return standard PONG response
-	return "PONG", nil
+	// Return "200" as per original server protocol (verified in Wireshark logs)
+	return "200", nil
 }
 
 // Handle the INFO command
@@ -1069,7 +1068,8 @@ func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, err
 	}
 	
 	// Format the final response as expected by Delphi client
-	response := "200 OK\r\nDATA=" + encrypted + "\r\n"
+	// From the Wireshark logs pattern, this should be "200 DATA=..."
+	response := "200 DATA=" + encrypted + "\r\n"
 	
 	log.Printf("Sending encrypted response of length: %d chars", len(encrypted))
 	
@@ -1081,9 +1081,35 @@ func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, err
 	return response, nil
 }
 
-// Handle the VERSION command - placeholder
+// Handle the VERSION command
 func (s *TCPServer) handleVersion(conn *TCPConnection, parts []string) (string, error) {
-	return "C=0", nil
+	// Check if client is authenticated
+	if conn.cryptoKey == "" {
+		return "ERROR Crypto key is not negotiated", nil
+	}
+	
+	// Create version response data
+	responseData := "C=0\r\n" // No updates available by default
+	
+	// You can add update files info here if needed
+	// responseData += "F1=update_file.exe\r\n"
+	// responseData += "V1=1.0.0.0\r\n"
+	
+	log.Printf("Prepared version response data: %s", responseData)
+	
+	// Encrypt the response
+	encrypted := compressData(responseData, conn.cryptoKey)
+	if encrypted == "" {
+		log.Printf("ERROR: Failed to encrypt version response data")
+		return "ERROR Failed to encrypt response", nil
+	}
+	
+	// Format the final response as expected by Delphi client
+	response := "200 DATA=" + encrypted + "\r\n"
+	
+	log.Printf("Sending encrypted version response of length: %d chars", len(encrypted))
+	
+	return response, nil
 }
 
 // Handle the DOWNLOAD command - placeholder
