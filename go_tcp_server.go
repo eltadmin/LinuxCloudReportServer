@@ -845,6 +845,12 @@ func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, err
 						}
 					}
 					
+					// Ensure serverKey is initialized with a default value if empty
+					if conn.serverKey == "" {
+						conn.serverKey = "D5F2" // Use the standard default
+						log.Printf("Warning: serverKey was undefined for client ID=4, using default: %s", conn.serverKey)
+					}
+					
 					// Try alternative keys with common patterns
 					var altKeys []string
 					
@@ -901,6 +907,12 @@ func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, err
 					if len(conn.clientHost) >= 1 {
 						hostLastChar = conn.clientHost[len(conn.clientHost)-1:]
 					}
+				}
+				
+				// Ensure serverKey is initialized with a default value if empty
+				if conn.serverKey == "" {
+					conn.serverKey = "D5F2" // Use the standard default
+					log.Printf("Warning: serverKey was undefined for client ID=4, using default: %s", conn.serverKey)
 				}
 				
 				// For ID=4, try different dictionary entries or special patterns
@@ -1236,27 +1248,37 @@ func decompressData(data string, key string) string {
 		return ""
 	}
 	
-	// Add padding if needed to make the length a multiple of AES block size
-	if len(decoded) % aes.BlockSize != 0 {
+	// Special handling for client ID=2 with known 152 byte issue
+	if len(decoded) == 152 {
+		log.Printf("Special handling for 152 byte data (likely from client ID=2 or ID=7)")
+		// Try trimming the data to 144 bytes (9 AES blocks) instead of padding
+		// This is based on observation that some clients may send trailing garbage
+		if len(decoded) >= 144 {
+			decoded = decoded[:144]
+			log.Printf("Trimmed data to 144 bytes (9 AES blocks) for better decryption")
+		}
+	// Special handling for client ID=7 with other known issues
+	} else if len(decoded) % 16 != 0 && len(decoded) > 16 {
+		// Try multiple trimming approaches for client ID=7
+		log.Printf("Attempting multiple trimming approaches for data length %d", len(decoded))
+		
+		// Store original data
+		originalDecoded := make([]byte, len(decoded))
+		copy(originalDecoded, decoded)
+		
+		// Trim to nearest multiple of 16
+		newLen := (len(decoded) / 16) * 16
+		decoded = decoded[:newLen]
+		log.Printf("Trimmed data to %d bytes (%d AES blocks)", newLen, newLen/16)
+	} else {
+		// Standard padding using PKCS#7 style
 		paddingNeeded := aes.BlockSize - (len(decoded) % aes.BlockSize)
 		log.Printf("Fixing invalid data length: %d not divisible by %d, adding %d bytes of padding", 
 			len(decoded), aes.BlockSize, paddingNeeded)
 		
-		// Special handling for client ID=2 with known 152 byte issue
-		if len(decoded) == 152 {
-			log.Printf("Special handling for 152 byte data (likely from client ID=2)")
-			// Try trimming the data to 144 bytes (9 AES blocks) instead of padding
-			// This is based on observation that some clients may send trailing garbage
-			if len(decoded) >= 144 {
-				decoded = decoded[:144]
-				log.Printf("Trimmed data to 144 bytes (9 AES blocks) for better decryption")
-			}
-		} else {
-			// Standard padding using PKCS#7 style
-			paddingBytes := bytes.Repeat([]byte{byte(paddingNeeded)}, paddingNeeded)
-			decoded = append(decoded, paddingBytes...)
-			log.Printf("New length after padding: %d bytes", len(decoded))
-		}
+		paddingBytes := bytes.Repeat([]byte{byte(paddingNeeded)}, paddingNeeded)
+		decoded = append(decoded, paddingBytes...)
+		log.Printf("New length after padding: %d bytes", len(decoded))
 	}
 	
 	// 4. Create AES cipher with MD5 of key (to match DCPcrypt)
@@ -1592,6 +1614,15 @@ func initializeSuccessfulKeys() {
 		"D5F25NE-",      // Using client ID
 	}
 	log.Printf("Initialized %d pre-defined successful keys for client ID=5", len(successfulKeysCache["5"]))
+	
+	// For client ID=7
+	successfulKeysCache["7"] = []string{
+		"D5F2YNE-",      // Using Y from dictionary
+		"D5F27NE-",      // Using client ID
+		"D5F2NE-",       // Without dictionary part
+		"D5F2FNE-",      // Using F from first position 
+	}
+	log.Printf("Initialized %d pre-defined successful keys for client ID=7", len(successfulKeysCache["7"]))
 	
 	// For client ID=9 (already has hardcoded key, but add as backup)
 	successfulKeysCache["9"] = []string{
