@@ -178,6 +178,8 @@ class Environment implements \ArrayAccess, \IteratorAggregate
 
     /**
      * Array Access: Offset Exists
+     * 
+     * #[\ReturnTypeWillChange]
      */
     public function offsetExists($offset)
     {
@@ -186,6 +188,8 @@ class Environment implements \ArrayAccess, \IteratorAggregate
 
     /**
      * Array Access: Offset Get
+     * 
+     * #[\ReturnTypeWillChange]
      */
     public function offsetGet($offset)
     {
@@ -198,6 +202,8 @@ class Environment implements \ArrayAccess, \IteratorAggregate
 
     /**
      * Array Access: Offset Set
+     * 
+     * #[\ReturnTypeWillChange]
      */
     public function offsetSet($offset, $value)
     {
@@ -206,6 +212,8 @@ class Environment implements \ArrayAccess, \IteratorAggregate
 
     /**
      * Array Access: Offset Unset
+     * 
+     * #[\ReturnTypeWillChange]
      */
     public function offsetUnset($offset)
     {

@@ -433,64 +433,59 @@ class Response implements \ArrayAccess, \Countable, \IteratorAggregate
     }
 
     /**
-     * DEPRECATION WARNING! ArrayAccess interface will be removed from \Slim\Http\Response.
-     * Iterate `headers` or `cookies` properties directly.
+     * ArrayAccess: Exists
      */
-
-    /**
-     * Array Access: Offset Exists
-     */
+    #[\ReturnTypeWillChange]
     public function offsetExists($offset)
     {
         return isset($this->headers[$offset]);
     }
 
     /**
-     * Array Access: Offset Get
+     * ArrayAccess: Get
      */
+    #[\ReturnTypeWillChange]
     public function offsetGet($offset)
     {
         return $this->headers[$offset];
     }
 
     /**
-     * Array Access: Offset Set
+     * ArrayAccess: Set
      */
+    #[\ReturnTypeWillChange]
     public function offsetSet($offset, $value)
     {
         $this->headers[$offset] = $value;
     }
 
     /**
-     * Array Access: Offset Unset
+     * ArrayAccess: Unset
      */
+    #[\ReturnTypeWillChange]
     public function offsetUnset($offset)
     {
         unset($this->headers[$offset]);
     }
 
     /**
-     * DEPRECATION WARNING! Countable interface will be removed from \Slim\Http\Response.
-     * Call `count` on `headers` or `cookies` properties directly.
-     *
      * Countable: Count
      */
+    #[\ReturnTypeWillChange]
     public function count()
     {
         return count($this->headers);
     }
 
     /**
-     * DEPRECATION WARNING! IteratorAggregate interface will be removed from \Slim\Http\Response.
-     * Iterate `headers` or `cookies` properties directly.
-     *
      * Get Iterator
      *
      * This returns the contained `\Slim\Http\Headers` instance which
-     * is itself iterable.
+     * is itself an `\IteratorAggregate`.
      *
      * @return \Slim\Http\Headers
      */
+    #[\ReturnTypeWillChange]
     public function getIterator()
     {
         return $this->headers->getIterator();
