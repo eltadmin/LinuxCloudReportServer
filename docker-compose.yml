@@ -12,14 +12,24 @@ services:
       - TCP_PORT=8016
       - SERVER_DEBUG=true  # Added for debugging
       - TZ=${TZ:-Europe/Sofia}  # Set timezone from host or default to Sofia
+      - SERVER_KEY=${SERVER_KEY:-D5F2}  # Server key from env or default
+      - USE_FIXED_DEBUG_KEY=true
     volumes:
       - ./keys:/app/keys  # Volume for storing server keys
+      - /etc/timezone:/etc/timezone:ro  # Sync timezone with host
       - /etc/localtime:/etc/localtime:ro  # Sync timezone with host
     depends_on:
       db:
         condition: service_healthy
       web:
         condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "localhost:8016"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 #  report_server:
 #    build:
@@ -41,6 +51,7 @@ services:
 #      - PYTHONPATH=/app
 #      - INIT_RESPONSE_FORMAT=${INIT_RESPONSE_FORMAT:-1}
 #      - DISABLE_TCP_SERVER=true  # Disable the Python TCP server
+#      - TZ=${TZ:-Europe/Sofia}
 #    depends_on:
 #      db:
 #        condition: service_healthy
@@ -59,6 +70,7 @@ services:
 #    command: python3 /app/tcp_proxy.py ${TARGET_HOST:-127.0.0.1} ${TARGET_PORT:-8016} 0.0.0.0 8017
 #    environment:
 #      - PYTHONPATH=/app
+#      - TZ=${TZ:-Europe/Sofia}
 #    depends_on:
 #      - go_tcp_server
 
@@ -71,6 +83,7 @@ services:
     volumes:
       - ./dreport:/var/www/html/dreport
       - php_vendor:/var/www/html/dreport/protected/slim/vendor
+      - /etc/timezone:/etc/timezone:ro  # Sync timezone with host
       - /etc/localtime:/etc/localtime:ro  # Sync timezone with host
     environment:
       - DB_HOST=db
@@ -85,6 +98,13 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8015/dreport/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   db:
     image: mysql:8.0
@@ -93,6 +113,7 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
       - ./dreports(8).sql:/docker-entrypoint-initdb.d/init.sql
+      - /etc/timezone:/etc/timezone:ro  # Sync timezone with host
       - /etc/localtime:/etc/localtime:ro  # Sync timezone with host
     environment:
       - MYSQL_DATABASE=dreports
@@ -100,6 +121,7 @@ services:
       - MYSQL_PASSWORD=dreports
       - MYSQL_ROOT_PASSWORD=rootpass
       - TZ=${TZ:-Europe/Sofia}  # Set timezone from host or default to Sofia
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s

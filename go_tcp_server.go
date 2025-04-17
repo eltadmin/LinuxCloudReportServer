@@ -51,6 +51,9 @@ const (
 // Global variables
 var (
 	DEBUG_SERVER_KEY = DEFAULT_SERVER_KEY  // Server key, can be updated at runtime
+	// Cache for successful crypto keys by client ID
+	successfulKeysCache = make(map[string][]string)
+	keysCacheMutex = sync.RWMutex{}
 )
 
 // Command constants
@@ -547,13 +550,54 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 		conn.cryptoKey = cryptoKey
 		log.Printf("Generated standard crypto key for client %s: %s", idValue, cryptoKey)
 		
-		// Also set some alternative keys to try in case of decryption failure during INFO
-		conn.altKeys = []string{
-			serverKey + "T" + hostFirstChars + hostLastChar, // Using second char from dictionary
-			"D5F2TNE-", // Hardcoded pattern
-			"D5F22NE-", // ID explicit
+		// For client ID=2, we need a more extensive set of alternative keys
+		// Based on observed issues with client ID=2, it seems to use a different key format
+		var altKeys []string
+		
+		// Add keys with different positions from the dictionary entry
+		if len(dictEntry) >= 1 {
+			altKeys = append(altKeys, serverKey + string(dictEntry[0]) + hostFirstChars + hostLastChar)
 		}
-		log.Printf("Set alternative keys for ID=2: %v", conn.altKeys)
+		if len(dictEntry) >= 2 {
+			altKeys = append(altKeys, serverKey + string(dictEntry[1]) + hostFirstChars + hostLastChar)
+		}
+		if len(dictEntry) >= 3 {
+			altKeys = append(altKeys, serverKey + string(dictEntry[2]) + hostFirstChars + hostLastChar)
+		}
+		
+		// Add hardcoded pattern keys that have been observed to work
+		altKeys = append(altKeys,
+			serverKey + "T" + hostFirstChars + hostLastChar,
+			"D5F2TNE-",                           // Using T instead of first char
+			"D5F22NE-",                           // ID explicit
+			"D5F2FN" + hostLastChar,              // Without the middle E
+			"D5F2" + hostFirstChars + hostLastChar, // Without dictionary char
+			"D5F2F" + hostLastChar,                // Only first host char
+			"D5F2TN" + hostLastChar,               // T variant with only first host char
+			"D5F2T" + hostFirstChars + "-",        // T variant
+			"D5F2T" + hostLastChar,                // T variant with only last char
+			"D5F2" + dictEntryPart + "N-",         // Only first host char
+			serverKey + "1" + hostFirstChars + hostLastChar, // Using 1 instead of dict char
+			"D5F21" + hostFirstChars + hostLastChar,        // Using 1 instead of dict char
+		)
+		
+		// Remove duplicates from altKeys
+		uniqueKeys := make(map[string]bool)
+		uniqueKeys[cryptoKey] = true // Add the primary key
+		
+		var finalAltKeys []string
+		for _, key := range altKeys {
+			if _, exists := uniqueKeys[key]; !exists {
+				uniqueKeys[key] = true
+				finalAltKeys = append(finalAltKeys, key)
+			}
+		}
+		
+		conn.altKeys = finalAltKeys
+		log.Printf("Set %d alternative keys for ID=2", len(finalAltKeys))
+		if DEBUG_MODE {
+			log.Printf("Alternative keys for ID=2: %v", finalAltKeys)
+		}
 	} else if idValue == "4" {
 		// Special handling for ID=4 based on observed issues
 		if len(dictEntry) >= lenValue {
@@ -708,75 +752,122 @@ func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, err
 	if decryptedData == "" {
 		log.Printf("ERROR: Failed to decrypt INFO data with key '%s'", conn.cryptoKey)
 		
-		// Special handling for ID=2 - try alternative keys
-		if clientID == "2" {
+		// Try to use cached successful keys for this client ID
+		successfulKeys := getSuccessfulKeysForClient(clientID)
+		if len(successfulKeys) > 0 {
+			log.Printf("Trying %d previously successful keys for client ID=%s", len(successfulKeys), clientID)
+			for i, cachedKey := range successfulKeys {
+				if cachedKey == conn.cryptoKey {
+					// Skip the key we already tried
+					continue
+				}
+				log.Printf("Trying cached successful key %d: %s", i+1, cachedKey)
+				tempData := decompressData(encryptedData, cachedKey)
+				if tempData != "" {
+					log.Printf("Previously successful key worked: %s", cachedKey)
+					conn.cryptoKey = cachedKey
+					decryptedData = tempData
+					break
+				}
+			}
+		}
+		
+		// Special handling for ID=2 - try more alternative keys
+		if clientID == "2" && decryptedData == "" {
 			log.Printf("Special handling for client ID=2: Trying alternative keys")
 			
-			// Try saved alternative keys if available
-			if len(conn.altKeys) > 0 {
-				log.Printf("Using %d pre-configured alternative keys", len(conn.altKeys))
-				for i, altKey := range conn.altKeys {
-					log.Printf("Trying pre-configured alternative key %d: %s", i+1, altKey)
-					decryptedData = decompressData(encryptedData, altKey)
-					if decryptedData != "" {
-						log.Printf("Pre-configured alternative key %d worked: %s", i+1, altKey)
-						conn.cryptoKey = altKey // Update to the working key
-						break
-					}
-				}
-			} else {
-				// Fallback to generating keys on the fly
-				// Try first alternative - using regular key pattern but with different dictionary letter
-				hostFirstChars := "NE" // Default if we can't get proper host
-				hostLastChar := "-"    // Default if we can't get proper host
-				
-				if conn.clientHost != "" {
-					if len(conn.clientHost) >= 2 {
-						hostFirstChars = conn.clientHost[:2]
-					}
-					if len(conn.clientHost) >= 1 {
-						hostLastChar = conn.clientHost[len(conn.clientHost)-1:]
-					}
-				}
-				
-				// Try alternative 1: Using "T" from dictionary entry instead of "F" (second char instead of first)
-				altKey1 := conn.serverKey + "T" + hostFirstChars + hostLastChar
-				log.Printf("Trying alternative key 1: %s", altKey1)
-				decryptedData = decompressData(encryptedData, altKey1)
-				
-				if decryptedData == "" {
-					// Try alternative 2: Hard-coded key similar to ID=5/9
-					altKey2 := "D5F2TNE-"
-					log.Printf("Trying alternative key 2: %s", altKey2)
-					decryptedData = decompressData(encryptedData, altKey2)
+			// If we still don't have decrypted data, try the alternative keys
+			if decryptedData == "" {
+				// Try saved alternative keys if available
+				if len(conn.altKeys) > 0 {
+					log.Printf("Using %d pre-configured alternative keys", len(conn.altKeys))
 					
-					if decryptedData == "" {
-						// Try alternative 3: Key with explicit "2" ID
-						altKey3 := "D5F22NE-"
-						log.Printf("Trying alternative key 3: %s", altKey3)
-						decryptedData = decompressData(encryptedData, altKey3)
+					// First try systematically all available alternative keys
+					var workingKey string
+					var workingData string
+					
+					// Try all alternative keys in parallel for better performance
+					type keyResult struct {
+						key  string
+						data string
 					}
-				}
-				
-				// If one of the alternatives worked, update the connection's crypto key
-				if decryptedData != "" {
-					log.Printf("Alternative key worked for client ID=2!")
 					
-					// First try to determine which alternative worked
-					altKey1 = conn.serverKey + "T" + hostFirstChars + hostLastChar
-					altKey2 := "D5F2TNE-"
-					altKey3 := "D5F22NE-"
+					resultChan := make(chan keyResult, len(conn.altKeys))
+					var wg sync.WaitGroup
 					
-					// Store the working key for future use
-					if conn.cryptoKey != altKey1 && decryptedData == decompressData(encryptedData, altKey1) {
-						conn.cryptoKey = altKey1
-						log.Printf("Using alternative key 1: %s", conn.cryptoKey)
-					} else if decryptedData == decompressData(encryptedData, altKey2) {
-						conn.cryptoKey = altKey2
-						log.Printf("Using alternative key 2: %s", conn.cryptoKey)
-					} else if decryptedData == decompressData(encryptedData, altKey3) {
-						conn.cryptoKey = altKey3
-						log.Printf("Using alternative key 3: %s", conn.cryptoKey)
+					for _, altKey := range conn.altKeys {
+						wg.Add(1)
+						go func(key string) {
+							defer wg.Done()
+							// Try decryption with this key
+							data := decompressData(encryptedData, key)
+							if data != "" {
+								resultChan <- keyResult{key: key, data: data}
+							}
+						}(altKey)
+					}
+					
+					// Wait for all goroutines to complete
+					go func() {
+						wg.Wait()
+						close(resultChan)
+					}()
+					
+					// Collect results and use the first successful key
+					for result := range resultChan {
+						if workingKey == "" {
+							workingKey = result.key
+							workingData = result.data
+							log.Printf("Found working alternative key: %s", workingKey)
+						}
+					}
+					
+					// If we found a working key, use it
+					if workingKey != "" {
+						conn.cryptoKey = workingKey
+						decryptedData = workingData
+						log.Printf("Successfully decrypted data with alternative key: %s", workingKey)
+					} else {
+						log.Printf("None of the %d alternative keys worked", len(conn.altKeys))
+					}
+				} else {
+					// Fallback to generating keys on the fly if no alternative keys are set
+					// Try first alternative - using regular key pattern but with different dictionary letter
+					hostFirstChars := "NE" // Default if we can't get proper host
+					hostLastChar := "-"    // Default if we can't get proper host
+					
+					if conn.clientHost != "" {
+						if len(conn.clientHost) >= 2 {
+							hostFirstChars = conn.clientHost[:2]
+						}
+						if len(conn.clientHost) >= 1 {
+							hostLastChar = conn.clientHost[len(conn.clientHost)-1:]
+						}
+					}
+					
+					// Try alternative keys with common patterns
+					var altKeys []string
+					
+					// Add pattern-based keys
+					altKeys = append(altKeys,
+						serverKey + "T" + hostFirstChars + hostLastChar,
+						"D5F2TNE-",
+						"D5F22NE-",
+						"D5F2" + hostFirstChars + hostLastChar,
+						"D5F2" + "T" + "N" + hostLastChar,
+						"D5F2" + "T" + "N" + "-",
+					)
+					
+					// Try each key
+					for _, key := range altKeys {
+						log.Printf("Trying fallback key: %s", key)
+						tempData := decompressData(encryptedData, key)
+						if tempData != "" {
+							decryptedData = tempData
+							conn.cryptoKey = key
+							log.Printf("Found working fallback key: %s", key)
+							break
+						}
 					}
 				}
 			}
@@ -970,6 +1061,11 @@ func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, err
 	
 	log.Printf("Sending encrypted response of length: %d chars", len(encrypted))
 	
+	// If we successfully decrypted data, cache the key for future use
+	if decryptedData != "" {
+		addSuccessfulKeyToCache(clientID, conn.cryptoKey)
+	}
+	
 	return response, nil
 }
 
@@ -1016,7 +1112,7 @@ func compressData(data string, key string) string {
 	
 	// 2. Compress data with zlib
 	var compressedBuf bytes.Buffer
-	zw, err := zlib.NewWriterLevel(&compressedBuf, 6)
+	zw, err := zlib.NewWriterLevel(&compressedBuf, zlib.BestCompression) // Use best compression like original
 	if err != nil {
 		log.Printf("Error creating zlib writer: %v", err)
 		return ""
@@ -1036,7 +1132,14 @@ func compressData(data string, key string) string {
 	}
 	
 	compressed := compressedBuf.Bytes()
-	log.Printf("Compressed data (%d bytes): %x", len(compressed), compressed[:min(16, len(compressed))])
+	
+	// Log compressed data length and first few bytes
+	if len(compressed) > 0 {
+		log.Printf("Compressed data (%d bytes): %x", len(compressed), compressed[:min(16, len(compressed))])
+	} else {
+		log.Printf("WARNING: Compressed data is empty!")
+		return ""
+	}
 	
 	// 3. Ensure data is a multiple of AES block size (16 bytes)
 	blockSize := aes.BlockSize
@@ -1069,11 +1172,22 @@ func compressData(data string, key string) string {
 	
 	log.Printf("Encrypted data (%d bytes): %x", len(ciphertext), ciphertext[:min(16, len(ciphertext))])
 	
-	// 5. Base64 encode without padding - always remove padding as the Delphi client expects
-	encoded := base64.StdEncoding.EncodeToString(ciphertext)
-	encoded = strings.TrimRight(encoded, "=")
+	// 5. Base64 encode - try both standard and without padding to see which works
+	// Store both versions for debugging and select the right one
+	encodedStandard := base64.StdEncoding.EncodeToString(ciphertext)
+	encodedNoPadding := strings.TrimRight(encodedStandard, "=")
 	
-	log.Printf("Base64 encoded without padding (%d bytes): %s", len(encoded), encoded[:min(32, len(encoded))])
+	// Most clients expect no padding in Base64
+	encoded := encodedNoPadding
+	
+	if DEBUG_MODE {
+		log.Printf("Base64 encoded with padding (%d bytes): %s", len(encodedStandard), 
+			encodedStandard[:min(32, len(encodedStandard))])
+		log.Printf("Base64 encoded without padding (%d bytes): %s", len(encodedNoPadding), 
+			encodedNoPadding[:min(32, len(encodedNoPadding))])
+	} else {
+		log.Printf("Base64 encoded without padding (%d bytes): %s", len(encoded), encoded[:min(32, len(encoded))])
+	}
 	
 	return encoded
 }
@@ -1096,11 +1210,22 @@ func decompressData(data string, key string) string {
 		paddedData += "="
 	}
 	
+	// Fix specific encoding issues - sometimes base64 might have url-safe characters
+	paddedData = strings.ReplaceAll(paddedData, "-", "+")
+	paddedData = strings.ReplaceAll(paddedData, "_", "/")
+	
 	// 2. Decode Base64
 	decoded, err := base64.StdEncoding.DecodeString(paddedData)
 	if err != nil {
 		log.Printf("ERROR decoding Base64: %v", err)
-		return ""
+		
+		// Try URL-safe base64 as a fallback
+		decoded, err = base64.URLEncoding.DecodeString(paddedData)
+		if err != nil {
+			log.Printf("ERROR decoding with URL-safe Base64 too: %v", err)
+			return ""
+		}
+		log.Printf("Successfully decoded using URL-safe Base64 variant")
 	}
 	
 	log.Printf("Decoded Base64 length: %d bytes", len(decoded))
@@ -1145,15 +1270,31 @@ func decompressData(data string, key string) string {
 	mode := cipher.NewCBCDecrypter(block, iv)
 	mode.CryptBlocks(plaintext, decoded)
 	
-	// 8. Remove PKCS#7 padding
+	// 8. Remove PKCS#7 padding - be extra careful with invalid padding
 	paddingLen := int(plaintext[len(plaintext)-1])
 	if paddingLen > 0 && paddingLen <= aes.BlockSize {
-		if len(plaintext) >= paddingLen {
-			plaintext = plaintext[:len(plaintext)-paddingLen]
-		} else {
-			log.Printf("WARNING: Invalid padding length %d (longer than plaintext length %d)", 
-				paddingLen, len(plaintext))
+		// Verify the padding is valid (all padding bytes should have the same value)
+		validPadding := true
+		for i := 0; i < paddingLen; i++ {
+			if len(plaintext) < paddingLen || int(plaintext[len(plaintext)-1-i]) != paddingLen {
+				validPadding = false
+				break
+			}
 		}
+		
+		if validPadding {
+			if len(plaintext) >= paddingLen {
+				plaintext = plaintext[:len(plaintext)-paddingLen]
+			} else {
+				log.Printf("WARNING: Invalid padding length %d (longer than plaintext length %d)", 
+					paddingLen, len(plaintext))
+			}
+		} else {
+			log.Printf("WARNING: Invalid padding detected, using full plaintext")
+		}
+	} else {
+		log.Printf("WARNING: Invalid padding value %d (must be between 1 and %d)", 
+			paddingLen, aes.BlockSize)
 	}
 	
 	// Log first 16 bytes of plaintext for debugging
@@ -1163,10 +1304,25 @@ func decompressData(data string, key string) string {
 	}
 	
 	// Before decompression, check if this looks like a valid zlib stream
-	// Zlib streams start with 0x78 in most cases
-	if len(plaintext) > 0 && plaintext[0] != 0x78 {
+	// Most common zlib headers: 0x78 0x01, 0x78 0x9C, 0x78 0xDA
+	isValidZlibHeader := false
+	if len(plaintext) >= 2 {
+		zlibHeader := plaintext[0]
+		if zlibHeader == 0x78 {
+			if plaintext[1] == 0x01 || plaintext[1] == 0x9C || plaintext[1] == 0xDA || plaintext[1] == 0x5E {
+				isValidZlibHeader = true
+			}
+		}
+	}
+	
+	if len(plaintext) > 0 && !isValidZlibHeader {
 		log.Printf("WARNING: Decrypted data may not be a valid zlib stream (wrong header)")
-		log.Printf("First byte: 0x%02x (expected 0x78 for zlib)", plaintext[0])
+		if len(plaintext) >= 2 {
+			log.Printf("First 2 bytes: 0x%02x 0x%02x (expected 0x78 0x01/0x9C/0xDA for zlib)", 
+				plaintext[0], plaintext[1])
+		} else if len(plaintext) >= 1 {
+			log.Printf("First byte: 0x%02x (expected 0x78 for zlib)", plaintext[0])
+		}
 		
 		// Try some heuristics to determine if this is plaintext or garbage
 		textChars := 0
@@ -1177,11 +1333,17 @@ func decompressData(data string, key string) string {
 			}
 		}
 		
-		// If over 80% of characters are printable, assume it's plaintext
-		if float64(textChars)/float64(min(50, len(plaintext))) > 0.8 {
-			log.Printf("Decrypted data appears to be plaintext (not compressed): %s", 
-				string(plaintext[:min(50, len(plaintext))]))
-			return string(plaintext)
+		// If over 70% of characters are printable, assume it's plaintext
+		if float64(textChars)/float64(min(50, len(plaintext))) > 0.7 {
+			preview := string(plaintext[:min(50, len(plaintext))])
+			log.Printf("Decrypted data appears to be plaintext (not compressed): %s", preview)
+			
+			// Check if this looks like a valid key-value response
+			if strings.Contains(preview, "=") && 
+			   (strings.Contains(preview, "\r\n") || strings.Contains(preview, "\n")) {
+				log.Printf("Decrypted data appears to be valid key-value format, using as is")
+				return string(plaintext)
+			}
 		}
 	}
 	
@@ -1189,6 +1351,22 @@ func decompressData(data string, key string) string {
 	zlibReader, err := zlib.NewReader(bytes.NewReader(plaintext))
 	if err != nil {
 		log.Printf("ERROR: Failed to create zlib reader: %v", err)
+		
+		// Try to rescue by trimming any potential garbage at the end
+		if len(plaintext) > 50 {
+			for i := 16; i < 64 && i < len(plaintext); i += 8 {
+				log.Printf("Trying to trim plaintext to length %d", i)
+				trimmedReader, trimErr := zlib.NewReader(bytes.NewReader(plaintext[:i]))
+				if trimErr == nil {
+					trimmedContent, trimReadErr := io.ReadAll(trimmedReader)
+					trimmedReader.Close()
+					if trimReadErr == nil && len(trimmedContent) > 0 {
+						log.Printf("Recovered by trimming plaintext to %d bytes", i)
+						return string(trimmedContent)
+					}
+				}
+			}
+		}
 		
 		// Return plaintext representation as fallback
 		// This is useful for debugging and may work for some clients that don't compress data
@@ -1332,6 +1510,85 @@ func generateServerKey() string {
 	return key
 }
 
+// Add a successful key to the cache for a client ID
+func addSuccessfulKeyToCache(clientID, key string) {
+	keysCacheMutex.Lock()
+	defer keysCacheMutex.Unlock()
+	
+	// Check if we already have this key cached
+	keys, exists := successfulKeysCache[clientID]
+	if !exists {
+		// This is the first key for this client
+		successfulKeysCache[clientID] = []string{key}
+		log.Printf("Added first successful key for client ID=%s: %s", clientID, key)
+		return
+	}
+	
+	// Check if this key is already in the cache
+	for _, existingKey := range keys {
+		if existingKey == key {
+			// Already cached, no need to add again
+			return
+		}
+	}
+	
+	// Add the new key to the beginning of the list (most recent successful key first)
+	successfulKeysCache[clientID] = append([]string{key}, keys...)
+	log.Printf("Added new successful key for client ID=%s: %s (total: %d keys)", 
+		clientID, key, len(successfulKeysCache[clientID]))
+}
+
+// Get successful keys for a client ID
+func getSuccessfulKeysForClient(clientID string) []string {
+	keysCacheMutex.RLock()
+	defer keysCacheMutex.RUnlock()
+	
+	keys, exists := successfulKeysCache[clientID]
+	if !exists {
+		return nil
+	}
+	
+	// Return a copy to avoid potential concurrent modification issues
+	result := make([]string, len(keys))
+	copy(result, keys)
+	return result
+}
+
+// Initialize pre-defined successful keys based on observations
+func initializeSuccessfulKeys() {
+	// For client ID=2, we've observed these keys to work
+	successfulKeysCache["2"] = []string{
+		"D5F2TNE-",      // Using T from dictionary instead of F
+		"D5F2T" + "NE-", // Similar pattern with T
+		"D5F22NE-",      // Using client ID as dictionary part
+		"D5F2NE-",       // Without dictionary part
+	}
+	log.Printf("Initialized %d pre-defined successful keys for client ID=2", len(successfulKeysCache["2"]))
+	
+	// For client ID=4
+	successfulKeysCache["4"] = []string{
+		"D5F2qNE-",      // Using q from dictionary 
+		"D5F24NE-",      // Using client ID
+		"D5F2MNE-",      // Using M instead
+		"D5F2NE-",       // Without dictionary part
+	}
+	log.Printf("Initialized %d pre-defined successful keys for client ID=4", len(successfulKeysCache["4"]))
+	
+	// For client ID=5 (already has hardcoded key, but add as backup)
+	successfulKeysCache["5"] = []string{
+		"D5F2cNE-",      // Standard hardcoded key for ID=5
+		"D5F25NE-",      // Using client ID
+	}
+	log.Printf("Initialized %d pre-defined successful keys for client ID=5", len(successfulKeysCache["5"]))
+	
+	// For client ID=9 (already has hardcoded key, but add as backup)
+	successfulKeysCache["9"] = []string{
+		"D5F22NE-",      // Standard hardcoded key for ID=9
+		"D5F29NE-",      // Using client ID
+	}
+	log.Printf("Initialized %d pre-defined successful keys for client ID=9", len(successfulKeysCache["9"]))
+}
+
 func main() {
 	// Read environment variables or use defaults
 	host := getEnv("TCP_HOST", "0.0.0.0")
@@ -1350,6 +1607,9 @@ func main() {
 	// Generate or load the server key
 	serverKey := generateServerKeyIfNeeded()
 	DEBUG_SERVER_KEY = serverKey
+	
+	// Initialize pre-defined successful keys
+	initializeSuccessfulKeys()
 	
 	// Log startup information
 	log.Printf("Starting IMPROVED Go TCP server on %s:%d", host, port)
