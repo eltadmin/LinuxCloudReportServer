@@ -556,19 +556,19 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 		
 		// Add keys with different positions from the dictionary entry
 		if len(dictEntry) >= 1 {
-			altKeys = append(altKeys, serverKey + string(dictEntry[0]) + hostFirstChars + hostLastChar)
+			altKeys = append(altKeys, conn.serverKey + string(dictEntry[0]) + hostFirstChars + hostLastChar)
 		}
 		if len(dictEntry) >= 2 {
-			altKeys = append(altKeys, serverKey + string(dictEntry[1]) + hostFirstChars + hostLastChar)
+			altKeys = append(altKeys, conn.serverKey + string(dictEntry[1]) + hostFirstChars + hostLastChar)
 		}
 		if len(dictEntry) >= 3 {
-			altKeys = append(altKeys, serverKey + string(dictEntry[2]) + hostFirstChars + hostLastChar)
+			altKeys = append(altKeys, conn.serverKey + string(dictEntry[2]) + hostFirstChars + hostLastChar)
 		}
 		
 		// Add hardcoded pattern keys that have been observed to work
 		altKeys = append(altKeys,
 			"D5F2FNE-",                           // Standard generated key
-			serverKey + "T" + hostFirstChars + hostLastChar,
+			conn.serverKey + "T" + hostFirstChars + hostLastChar,
 			"D5F22NE-",                           // ID explicit
 			"D5F2FN" + hostLastChar,              // Without the middle E
 			"D5F2" + hostFirstChars + hostLastChar, // Without dictionary char
@@ -577,7 +577,7 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 			"D5F2T" + hostFirstChars + "-",        // T variant
 			"D5F2T" + hostLastChar,                // T variant with only last char
 			"D5F2" + dictEntryPart + "N-",         // Only first host char
-			serverKey + "1" + hostFirstChars + hostLastChar, // Using 1 instead of dict char
+			conn.serverKey + "1" + hostFirstChars + hostLastChar, // Using 1 instead of dict char
 			"D5F21" + hostFirstChars + hostLastChar,        // Using 1 instead of dict char
 		)
 		
@@ -607,13 +607,13 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 		}
 		
 		// First try the standard key generation
-		cryptoKey := serverKey + dictEntryPart + hostFirstChars + hostLastChar
+		cryptoKey := conn.serverKey + dictEntryPart + hostFirstChars + hostLastChar
 		conn.cryptoKey = cryptoKey
 		log.Printf("Generated standard crypto key for client %s: %s", idValue, cryptoKey)
 		
 		// Also set some alternative keys to try in case of decryption failure during INFO
 		conn.altKeys = []string{
-			serverKey + "M" + hostFirstChars + hostLastChar, // Try using "M" from dictionary
+			conn.serverKey + "M" + hostFirstChars + hostLastChar, // Try using "M" from dictionary
 			"D5F24NE-", // ID explicit
 			"D5F2MNE-", // Try another pattern
 		}
@@ -627,7 +627,7 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 		}
 		
 		// Create the crypto key by combining all parts according to the protocol
-		cryptoKey := serverKey + dictEntryPart + hostFirstChars + hostLastChar
+		cryptoKey := conn.serverKey + dictEntryPart + hostFirstChars + hostLastChar
 		conn.cryptoKey = cryptoKey
 		log.Printf("Generated crypto key for client %s: %s", idValue, cryptoKey)
 	}
@@ -643,12 +643,12 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	}
 	
 	// Format the response exactly as expected by Delphi client
-	response := fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", serverKey, lenValue)
+	response := fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", conn.serverKey, lenValue)
 	
 	// Log key details for debugging
 	log.Printf("======= INIT Response Details =======")
 	log.Printf("Dictionary Entry [%d]: '%s', Using Part: '%s'", dictIndex, dictEntry, dictEntryPart)
-	log.Printf("Server Key: '%s', Len: %d", serverKey, lenValue)
+	log.Printf("Server Key: '%s', Len: %d", conn.serverKey, lenValue)
 	log.Printf("Host parts: First='%s', Last='%s'", hostFirstChars, hostLastChar)
 	log.Printf("Final Crypto Key: '%s'", conn.cryptoKey)
 	log.Printf("Response: '%s' (%d bytes)", response, len(response))
@@ -850,7 +850,7 @@ func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, err
 					
 					// Add pattern-based keys
 					altKeys = append(altKeys,
-						DEBUG_SERVER_KEY + "T" + hostFirstChars + hostLastChar,
+						conn.serverKey + "T" + hostFirstChars + hostLastChar,
 						"D5F2TNE-",
 						"D5F22NE-",
 						"D5F2" + hostFirstChars + hostLastChar,
