@@ -13,6 +13,7 @@ class DbHandler {
  
    // private $conn;
     private $pDatabase;
+    private $conn;
  
     function __construct() {
         require_once('database.class.php');  
