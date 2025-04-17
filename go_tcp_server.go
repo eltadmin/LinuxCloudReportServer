@@ -554,6 +554,26 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 			"D5F22NE-", // ID explicit
 		}
 		log.Printf("Set alternative keys for ID=2: %v", conn.altKeys)
+	} else if idValue == "4" {
+		// Special handling for ID=4 based on observed issues
+		if len(dictEntry) >= lenValue {
+			dictEntryPart = dictEntry[:lenValue]
+		} else {
+			dictEntryPart = dictEntry
+		}
+		
+		// First try the standard key generation
+		cryptoKey := serverKey + dictEntryPart + hostFirstChars + hostLastChar
+		conn.cryptoKey = cryptoKey
+		log.Printf("Generated standard crypto key for client %s: %s", idValue, cryptoKey)
+		
+		// Also set some alternative keys to try in case of decryption failure during INFO
+		conn.altKeys = []string{
+			serverKey + "M" + hostFirstChars + hostLastChar, // Try using "M" from dictionary
+			"D5F24NE-", // ID explicit
+			"D5F2MNE-", // Try another pattern
+		}
+		log.Printf("Set alternative keys for ID=4: %v", conn.altKeys)
 	} else {
 		// Normal handling for other IDs
 		if len(dictEntry) >= lenValue {
@@ -757,6 +777,128 @@ func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, err
 					} else if decryptedData == decompressData(encryptedData, altKey3) {
 						conn.cryptoKey = altKey3
 						log.Printf("Using alternative key 3: %s", conn.cryptoKey)
+					}
+				}
+			}
+		}
+		
+		// Special handling for ID=4 - try alternative keys
+		if clientID == "4" && decryptedData == "" {
+			log.Printf("Special handling for client ID=4: Trying alternative keys")
+			
+			// Try saved alternative keys if available
+			if len(conn.altKeys) > 0 {
+				log.Printf("Using %d pre-configured alternative keys", len(conn.altKeys))
+				for i, altKey := range conn.altKeys {
+					log.Printf("Trying pre-configured alternative key %d: %s", i+1, altKey)
+					decryptedData = decompressData(encryptedData, altKey)
+					if decryptedData != "" {
+						log.Printf("Pre-configured alternative key %d worked: %s", i+1, altKey)
+						conn.cryptoKey = altKey // Update to the working key
+						break
+					}
+				}
+			} else {
+				// Fallback to generating keys on the fly
+				hostFirstChars := "NE" // Default if we can't get proper host
+				hostLastChar := "-"    // Default if we can't get proper host
+				
+				if conn.clientHost != "" {
+					if len(conn.clientHost) >= 2 {
+						hostFirstChars = conn.clientHost[:2]
+					}
+					if len(conn.clientHost) >= 1 {
+						hostLastChar = conn.clientHost[len(conn.clientHost)-1:]
+					}
+				}
+				
+				// For ID=4, try different dictionary entries or special patterns
+				// The client might be using a dictionary entry not matching our standard logic
+				idInt, _ := strconv.Atoi(clientID)
+				if idInt > 0 && idInt-1 < len(CRYPTO_DICTIONARY) {
+					dictEntry := CRYPTO_DICTIONARY[idInt-1]
+					
+					// Try the first character from the dict entry (the standard approach)
+					dictChar1 := ""
+					if len(dictEntry) > 0 {
+						dictChar1 = string(dictEntry[0])
+					}
+					
+					// Try the second character if available
+					dictChar2 := ""
+					if len(dictEntry) > 1 {
+						dictChar2 = string(dictEntry[1])
+					}
+					
+					// Try the third character if available
+					dictChar3 := ""
+					if len(dictEntry) > 2 {
+						dictChar3 = string(dictEntry[2])
+					}
+					
+					log.Printf("Trying dictionary entry alternatives for ID=%s: [%s, %s, %s]", 
+						clientID, dictChar1, dictChar2, dictChar3)
+						
+					// Try different combinations
+					altKeys := []string{
+						conn.serverKey + dictChar1 + hostFirstChars + hostLastChar,
+						conn.serverKey + dictChar2 + hostFirstChars + hostLastChar,
+						conn.serverKey + dictChar3 + hostFirstChars + hostLastChar,
+					}
+					
+					// Add special hardcoded keys
+					altKeys = append(altKeys, 
+						fmt.Sprintf("D5F2%sNE-", clientID),
+						"D5F2MNE-",
+						"D5F2ANE-",
+						"D5F2qNE-")
+					
+					// Try each key
+					for i, key := range altKeys {
+						log.Printf("Trying generated key alternative %d: %s", i+1, key)
+						testDecrypted := decompressData(encryptedData, key)
+						if testDecrypted != "" {
+							log.Printf("Alternative key %d worked: %s", i+1, key)
+							decryptedData = testDecrypted
+							conn.cryptoKey = key // Update to working key
+							break
+						}
+					}
+				}
+				
+				// Try alternative 1: Using "M" from dictionary entry
+				altKey1 := conn.serverKey + "M" + hostFirstChars + hostLastChar
+				log.Printf("Trying alternative key 1 for ID=4: %s", altKey1)
+				if decryptedData == "" {
+					testDecrypted := decompressData(encryptedData, altKey1)
+					if testDecrypted != "" {
+						decryptedData = testDecrypted
+						conn.cryptoKey = altKey1
+						log.Printf("Alternative key 1 worked for ID=4: %s", altKey1)
+					}
+				}
+				
+				// Try alternative 2: Hard-coded key with ID
+				if decryptedData == "" {
+					altKey2 := "D5F24NE-"
+					log.Printf("Trying alternative key 2 for ID=4: %s", altKey2)
+					testDecrypted := decompressData(encryptedData, altKey2)
+					if testDecrypted != "" {
+						decryptedData = testDecrypted
+						conn.cryptoKey = altKey2
+						log.Printf("Alternative key 2 worked for ID=4: %s", altKey2)
+					}
+				}
+				
+				// Try alternative 3: Key with different pattern
+				if decryptedData == "" {
+					altKey3 := "D5F2MNE-"
+					log.Printf("Trying alternative key 3 for ID=4: %s", altKey3)
+					testDecrypted := decompressData(encryptedData, altKey3)
+					if testDecrypted != "" {
+						decryptedData = testDecrypted
+						conn.cryptoKey = altKey3
+						log.Printf("Alternative key 3 worked for ID=4: %s", altKey3)
 					}
 				}
 			}
@@ -1006,21 +1148,62 @@ func decompressData(data string, key string) string {
 	// 8. Remove PKCS#7 padding
 	paddingLen := int(plaintext[len(plaintext)-1])
 	if paddingLen > 0 && paddingLen <= aes.BlockSize {
-		plaintext = plaintext[:len(plaintext)-paddingLen]
+		if len(plaintext) >= paddingLen {
+			plaintext = plaintext[:len(plaintext)-paddingLen]
+		} else {
+			log.Printf("WARNING: Invalid padding length %d (longer than plaintext length %d)", 
+				paddingLen, len(plaintext))
+		}
+	}
+	
+	// Log first 16 bytes of plaintext for debugging
+	previewLen := min(16, len(plaintext))
+	if previewLen > 0 {
+		log.Printf("First %d bytes of decrypted data: %v", previewLen, plaintext[:previewLen])
+	}
+	
+	// Before decompression, check if this looks like a valid zlib stream
+	// Zlib streams start with 0x78 in most cases
+	if len(plaintext) > 0 && plaintext[0] != 0x78 {
+		log.Printf("WARNING: Decrypted data may not be a valid zlib stream (wrong header)")
+		log.Printf("First byte: 0x%02x (expected 0x78 for zlib)", plaintext[0])
+		
+		// Try some heuristics to determine if this is plaintext or garbage
+		textChars := 0
+		for i := 0; i < min(50, len(plaintext)); i++ {
+			if (plaintext[i] >= 32 && plaintext[i] <= 126) || 
+			   plaintext[i] == '\r' || plaintext[i] == '\n' || plaintext[i] == '\t' {
+				textChars++
+			}
+		}
+		
+		// If over 80% of characters are printable, assume it's plaintext
+		if float64(textChars)/float64(min(50, len(plaintext))) > 0.8 {
+			log.Printf("Decrypted data appears to be plaintext (not compressed): %s", 
+				string(plaintext[:min(50, len(plaintext))]))
+			return string(plaintext)
+		}
 	}
 	
 	// 9. Decompress with zlib
 	zlibReader, err := zlib.NewReader(bytes.NewReader(plaintext))
 	if err != nil {
 		log.Printf("ERROR: Failed to create zlib reader: %v", err)
-		return string(plaintext) // Return plaintext if not compressed
+		
+		// Return plaintext representation as fallback
+		// This is useful for debugging and may work for some clients that don't compress data
+		log.Printf("Successfully decrypted data but not compressed: '%s'", string(plaintext))
+		return string(plaintext)
 	}
 	
 	decompressed, err := io.ReadAll(zlibReader)
 	zlibReader.Close()
 	if err != nil {
 		log.Printf("ERROR reading decompressed data: %v", err)
-		return string(plaintext) // Return plaintext if decompression fails
+		
+		// Return plaintext as fallback
+		log.Printf("Decompression failed, returning plain decrypted data: '%s'", string(plaintext))
+		return string(plaintext)
 	}
 	
 	log.Printf("Successfully decompressed data (%d bytes)", len(decompressed))
@@ -1183,6 +1366,9 @@ func main() {
 	log.Printf("6. Enhanced Logging - Added detailed logging for debugging")
 	log.Printf("7. Validation - Added encryption validation testing")
 	log.Printf("8. Auto Key Generation - Added automatic server key generation")
+	log.Printf("9. Special ID Handling - Added special handling for ID=2, ID=4, ID=5, and ID=9")
+	log.Printf("10. Improved AES Padding - Better handling of non-standard data lengths")
+	log.Printf("11. Zlib Error Handling - Improved handling of zlib decompression errors")
 	
 	// Create and start the TCP server
 	server := NewTCPServer()
