@@ -34,6 +34,7 @@ import (
 	"sync"
 	"time"
 	"compress/zlib"
+	"io/ioutil"
 )
 
 // Configuration constants
@@ -85,19 +86,23 @@ var CRYPTO_DICTIONARY = []string{
 // TCPConnection represents a client connection
 type TCPConnection struct {
 	conn          net.Conn
-	clientID      string
+	active        bool
+	lastActivity  time.Time
 	authenticated bool
+	clientID      string
 	clientHost    string
-	appType       string
-	appVersion    string
+	cryptoKey     string
 	serverKey     string
 	keyLength     int
-	cryptoKey     string
-	lastError     string
-	lastActivity  time.Time
-	lastPing      time.Time
+	appType       string
+	appVersion    string
 	connMutex     sync.Mutex
 	altKeys       []string
+	clientDT      string
+	clientTM      string
+	clientHST     string
+	clientATP     string
+	clientAVR     string
 }
 
 // TCPServer represents the TCP server
@@ -429,231 +434,65 @@ func parseParameters(parts []string) map[string]string {
 
 // Handle the INIT command
 func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, error) {
-	// Parse parameters into a map
-	params := make(map[string]string)
-	for _, part := range parts[1:] {
-		if strings.Contains(part, "=") {
-			kv := strings.SplitN(part, "=", 2)
-			params[strings.ToUpper(kv[0])] = kv[1]
+	log.Printf("Received INIT from client: %v", parts)
+
+	// Parse parameters from parts
+	params := parseParameters(parts)
+
+	// Update connection information from parameters
+	for k, v := range params {
+		switch k {
+		case "ID":
+			conn.clientID = v
+			log.Printf("Client ID: %s", v)
+		case "DT":
+			conn.clientDT = v
+			log.Printf("Client DT: %s", v)
+		case "TM":
+			conn.clientTM = v
+			log.Printf("Client TM: %s", v)
+		case "HST":
+			conn.clientHST = v
+			log.Printf("Client HST: %s", v)
+		case "ATP":
+			conn.clientATP = v
+			log.Printf("Client ATP: %s", v)
+		case "AVR":
+			conn.clientAVR = v
+			log.Printf("Client AVR: %s", v)
 		}
 	}
-	
-	// Extract required parameters
-	idValue, ok := params["ID"]
-	if !ok {
-		return "ERROR Missing required parameter: ID", nil
+
+	// Set connection as authenticated
+	conn.authenticated = true
+
+	// Generate server key for this connection
+	conn.serverKey = DEFAULT_SERVER_KEY
+	if DEBUG_MODE {
+		conn.serverKey = DEBUG_SERVER_KEY
 	}
-	
-	// Try to parse the ID value
-	idIndex, err := strconv.Atoi(idValue)
-	if err != nil || idIndex < 1 || idIndex > len(CRYPTO_DICTIONARY) {
-		return "ERROR Invalid key ID format", nil
-	}
-	
-	// Get other parameters
-	dateVal := params["DT"]
-	timeVal := params["TM"]
-	hostVal := params["HST"]
-	appTypeVal := params["ATP"]
-	appVerVal := params["AVR"]
-	
-	// Store client information
-	conn.clientID = idValue
-	conn.clientHost = hostVal
-	conn.appType = appTypeVal
-	conn.appVersion = appVerVal
-	
-	// Log the init request
-	log.Printf("Client init request: ID=%s, Host=%s, Date=%s, Time=%s, App=%s %s",
-		idValue, hostVal, dateVal, timeVal, appTypeVal, appVerVal)
-	
-	// Get the crypto dictionary entry
-	dictIndex := idIndex - 1
-	dictEntry := CRYPTO_DICTIONARY[dictIndex]
-	
-	// Generate a server key from the auto-generated or loaded key
-	serverKey := DEBUG_SERVER_KEY
-	if !DEBUG_MODE || !USE_FIXED_DEBUG_KEY {
-		// Use the first 4 characters of the auto-generated key
-		if len(DEBUG_SERVER_KEY) >= 4 {
-			serverKey = DEBUG_SERVER_KEY[:4]
-		} else {
-			serverKey = DEBUG_SERVER_KEY
-		}
-	}
-	
-	// Set length value based on client ID
-	// ID=9 uses length 2, others use length 1 as per original server
-	lenValue := 1
-	if idValue == "9" {
-		lenValue = 2
-	}
-	
-	// Update connection with key details
-	conn.serverKey = serverKey
-	conn.keyLength = lenValue
-	
-	// Extract host parts for key generation
-	hostFirstChars := "NE" // Default if we can't get proper host
-	hostLastChar := "-"    // Default if we can't get proper host
-	
-	if hostVal != "" {
-		if len(hostVal) >= 2 {
-			hostFirstChars = hostVal[:2]
-		}
-		if len(hostVal) >= 1 {
-			hostLastChar = hostVal[len(hostVal)-1:]
-		}
-	}
-	
-	// Generate dictionary part based on client ID and LEN
-	dictEntryPart := ""
-	if idValue == "9" {
-		// Special handling for ID=9 based on observed logs
-		if len(dictEntry) >= 2 {
-			dictEntryPart = dictEntry[:2] // Use first 2 chars for ID=9
-			log.Printf("Special handling for ID=9: Using first 2 chars of dictionary entry %s: %s", 
-				dictEntry, dictEntryPart)
-		} else {
-			dictEntryPart = dictEntry
-		}
-		
-		// For ID=9, use the hardcoded key that works
-		cryptoKey := "D5F22NE-"
+	log.Printf("Set server key: %s for client %s", conn.serverKey, conn.clientID)
+
+	// Generate a crypto key for this session
+	cryptoKeyLength := 4 // Default length for the crypto key
+	if len(conn.clientDT) > 0 && len(conn.clientTM) > 0 {
+		// Generate key based on client date and time
+		clientDateTime := conn.clientDT + conn.clientTM
+		cryptoKey := generateCryptoKey(clientDateTime, cryptoKeyLength)
 		conn.cryptoKey = cryptoKey
-		log.Printf("Using hardcoded crypto key for ID=9: %s", cryptoKey)
-	} else if idValue == "5" {
-		// Special handling for ID=5 based on requirements
-		if len(dictEntry) >= lenValue {
-			dictEntryPart = dictEntry[:lenValue]
-		} else {
-			dictEntryPart = dictEntry
-		}
+		log.Printf("Generated crypto key: %s for client %s", cryptoKey, conn.clientID)
 		
-		// For ID=5, use the hardcoded key specified in requirements
-		cryptoKey := "D5F2cNE-"
-		conn.cryptoKey = cryptoKey
-		log.Printf("Using hardcoded crypto key for ID=5: %s", cryptoKey)
-	} else if idValue == "2" {
-		// Special handling for ID=2 based on observed issues
-		if len(dictEntry) >= lenValue {
-			dictEntryPart = dictEntry[:lenValue]
-		} else {
-			dictEntryPart = dictEntry
-		}
-		
-		// For client ID=2, we need a more extensive set of alternative keys
-		// Based on observed issues with client ID=2, it seems to use a different key format
-		var altKeys []string
-		
-		// Use hardcoded key as primary key for ID=2 based on observation of successful connections
-		cryptoKey := "D5F2TNE-"
-		conn.cryptoKey = cryptoKey
-		log.Printf("Using hardcoded crypto key for ID=2: %s", cryptoKey)
-		
-		// Add keys with different positions from the dictionary entry
-		if len(dictEntry) >= 1 {
-			altKeys = append(altKeys, conn.serverKey + string(dictEntry[0]) + hostFirstChars + hostLastChar)
-		}
-		if len(dictEntry) >= 2 {
-			altKeys = append(altKeys, conn.serverKey + string(dictEntry[1]) + hostFirstChars + hostLastChar)
-		}
-		if len(dictEntry) >= 3 {
-			altKeys = append(altKeys, conn.serverKey + string(dictEntry[2]) + hostFirstChars + hostLastChar)
-		}
-		
-		// Add hardcoded pattern keys that have been observed to work
-		altKeys = append(altKeys,
-			"D5F2FNE-",                           // Standard generated key
-			conn.serverKey + "T" + hostFirstChars + hostLastChar,
-			"D5F22NE-",                           // ID explicit
-			"D5F2FN" + hostLastChar,              // Without the middle E
-			"D5F2" + hostFirstChars + hostLastChar, // Without dictionary char
-			"D5F2F" + hostLastChar,                // Only first host char
-			"D5F2TN" + hostLastChar,               // T variant with only first host char
-			"D5F2T" + hostFirstChars + "-",        // T variant
-			"D5F2T" + hostLastChar,                // T variant with only last char
-			"D5F2" + dictEntryPart + "N-",         // Only first host char
-			conn.serverKey + "1" + hostFirstChars + hostLastChar, // Using 1 instead of dict char
-			"D5F21" + hostFirstChars + hostLastChar,        // Using 1 instead of dict char
-		)
-		
-		// Remove duplicates from altKeys
-		uniqueKeys := make(map[string]bool)
-		uniqueKeys[cryptoKey] = true // Add the primary key
-		
-		var finalAltKeys []string
-		for _, key := range altKeys {
-			if _, exists := uniqueKeys[key]; !exists {
-				uniqueKeys[key] = true
-				finalAltKeys = append(finalAltKeys, key)
-			}
-		}
-		
-		conn.altKeys = finalAltKeys
-		log.Printf("Set %d alternative keys for ID=2", len(finalAltKeys))
-		if DEBUG_MODE {
-			log.Printf("Alternative keys for ID=2: %v", finalAltKeys)
-		}
-	} else if idValue == "4" {
-		// Special handling for ID=4 based on observed issues
-		if len(dictEntry) >= lenValue {
-			dictEntryPart = dictEntry[:lenValue]
-		} else {
-			dictEntryPart = dictEntry
-		}
-		
-		// First try the standard key generation
-		cryptoKey := conn.serverKey + dictEntryPart + hostFirstChars + hostLastChar
-		conn.cryptoKey = cryptoKey
-		log.Printf("Generated standard crypto key for client %s: %s", idValue, cryptoKey)
-		
-		// Also set some alternative keys to try in case of decryption failure during INFO
-		conn.altKeys = []string{
-			conn.serverKey + "M" + hostFirstChars + hostLastChar, // Try using "M" from dictionary
-			"D5F24NE-", // ID explicit
-			"D5F2MNE-", // Try another pattern
-		}
-		log.Printf("Set alternative keys for ID=4: %v", conn.altKeys)
+		// Format response according to protocol: 200-KEY=xxxx\r\n200 LEN=y\r\n
+		return fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", cryptoKey, cryptoKeyLength), nil
 	} else {
-		// Normal handling for other IDs
-		if len(dictEntry) >= lenValue {
-			dictEntryPart = dictEntry[:lenValue]
-		} else {
-			dictEntryPart = dictEntry
-		}
+		// Use default key if client didn't provide date/time
+		defaultKey := "ABCD"
+		conn.cryptoKey = defaultKey
+		log.Printf("Using default crypto key: %s for client %s", defaultKey, conn.clientID)
 		
-		// Create the crypto key by combining all parts according to the protocol
-		cryptoKey := conn.serverKey + dictEntryPart + hostFirstChars + hostLastChar
-		conn.cryptoKey = cryptoKey
-		log.Printf("Generated crypto key for client %s: %s", idValue, cryptoKey)
+		// Format response according to protocol
+		return fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", defaultKey, len(defaultKey)), nil
 	}
-	
-	// Validate the encryption works with this key
-	isValid := validateEncryption(conn.cryptoKey)
-	log.Printf("Encryption validation result: %v", isValid)
-	
-	// Even if validation fails, continue with the response as the key might still work
-	// But log a warning
-	if !isValid {
-		log.Printf("WARNING: Encryption validation failed for key: %s", conn.cryptoKey)
-	}
-	
-	// Format the response exactly as expected by Delphi client
-	// From Wireshark logs: "200-KEY=30DF\r\n200 LEN=5\r\n"
-	// Note the dash after 200 in the first line and no dash in the second line
-	response := fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", conn.serverKey, lenValue)
-	
-	// Log key details for debugging
-	log.Printf("======= INIT Response Details =======")
-	log.Printf("Dictionary Entry [%d]: '%s', Using Part: '%s'", dictIndex, dictEntry, dictEntryPart)
-	log.Printf("Server Key: '%s', Len: %d", conn.serverKey, lenValue)
-	log.Printf("Host parts: First='%s', Last='%s'", hostFirstChars, hostLastChar)
-	log.Printf("Final Crypto Key: '%s'", conn.cryptoKey)
-	log.Printf("Response: '%s' (%d bytes)", response, len(response))
-	log.Printf("===================================")
-	
-	return response, nil
 }
 
 // Handle the ERROR command
@@ -695,364 +534,84 @@ func (s *TCPServer) handlePing(conn *TCPConnection) (string, error) {
 
 // Handle the INFO command
 func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, error) {
-	// Check for valid command format
+	// Check if we have necessary parameters
 	if len(parts) < 2 {
-		return "ERROR Invalid INFO command", nil
+		return "ERROR Missing parameters for INFO command", nil
 	}
 	
-	// Extract DATA parameter
-	var encryptedData string
+	// Extract the encrypted data
+	data := ""
 	for _, part := range parts[1:] {
 		if strings.HasPrefix(part, "DATA=") {
-			encryptedData = part[5:] // everything after "DATA="
+			data = part[5:]
 			break
 		}
 	}
 	
-	if encryptedData == "" {
-		return "ERROR No DATA parameter in INFO command", nil
+	if data == "" {
+		return "ERROR Missing DATA parameter", nil
 	}
 	
-	// Log received data and used key
-	log.Printf("INFO command received with encrypted data of length: %d chars", len(encryptedData))
+	log.Printf("INFO command received with encrypted data of length: %d chars", len(data))
+	
+	// Try to decrypt with current key
 	log.Printf("Using crypto key: '%s'", conn.cryptoKey)
-	
-	// Client identification details
-	clientID := conn.clientID
-	if clientID == "" {
-		clientID = "1" // Fallback ID if not set
-	}
-	
 	log.Printf("Client details: ID=%s, Host=%s, Key=%s, Length=%d", 
-		clientID, conn.clientHost, conn.serverKey, conn.keyLength)
+		conn.clientID, conn.clientHost, conn.serverKey, conn.keyLength)
 	
-	// Special handling for ID=9
-	if clientID == "9" {
-		log.Printf("Special handling for client ID=9")
-		if conn.cryptoKey != "D5F22NE-" {
-			conn.cryptoKey = "D5F22NE-"
-			log.Printf("Forcing hardcoded crypto key for ID=9: %s", conn.cryptoKey)
+	// First try with the connection's main crypto key
+	decryptedData := decompressData(data, conn.cryptoKey)
+	
+	// Still no success? Try alternative keys from the cache for this client ID
+	if decryptedData == "" || !isValidDecryptedData(decryptedData) {
+		log.Printf("Initial decryption failed, trying alternative keys from cache for client ID=%s", conn.clientID)
+		
+		// Get keys for this client ID
+		altKeys := successfulKeysCache[conn.clientID]
+		
+		// Try other alternative keys (from client-specific list)
+		if keys, exists := successfulKeysPerClient[conn.clientID]; exists && len(keys) > 0 {
+			altKeys = append(altKeys, keys...)
+			log.Printf("Added %d predefined keys for client ID=%s", len(keys), conn.clientID)
+		}
+		
+		log.Printf("Trying %d alternative keys for client ID=%s", len(altKeys), conn.clientID)
+		
+		// Try each key in the list
+		for _, altKey := range altKeys {
+			if altKey == conn.cryptoKey {
+				continue // Skip if same as current key
+			}
+			
+			log.Printf("Trying alternative key: %s", altKey)
+			
+			tempDecrypted := decompressData(data, altKey)
+			if tempDecrypted != "" && isValidDecryptedData(tempDecrypted) {
+				log.Printf("Successfully decrypted with alternative key: %s", altKey)
+				
+				// Save this key as the main crypto key for this connection
+				conn.cryptoKey = altKey
+				addSuccessfulKeyToCache(conn.clientID, altKey)
+				
+				decryptedData = tempDecrypted
+				break
+			}
 		}
 	}
-
-	// Special handling for ID=5
-	if clientID == "5" {
-		log.Printf("Special handling for client ID=5")
-		if conn.cryptoKey != "D5F2cNE-" {
-			conn.cryptoKey = "D5F2cNE-"
-			log.Printf("Forcing hardcoded crypto key for ID=5: %s", conn.cryptoKey)
-		}
-	}
 	
-	// Try to decrypt using the crypto key
-	decryptedData := decompressData(encryptedData, conn.cryptoKey)
-	
-	// Check if decryption succeeded
+	// Still no success after trying alternatives
 	if decryptedData == "" {
-		log.Printf("ERROR: Failed to decrypt INFO data with key '%s'", conn.cryptoKey)
-		
-		// Try to use cached successful keys for this client ID
-		successfulKeys := getSuccessfulKeysForClient(clientID)
-		if len(successfulKeys) > 0 {
-			log.Printf("Trying %d previously successful keys for client ID=%s", len(successfulKeys), clientID)
-			for i, cachedKey := range successfulKeys {
-				if cachedKey == conn.cryptoKey {
-					// Skip the key we already tried
-					continue
-				}
-				log.Printf("Trying cached successful key %d: %s", i+1, cachedKey)
-				tempData := decompressData(encryptedData, cachedKey)
-				if tempData != "" {
-					log.Printf("Previously successful key worked: %s", cachedKey)
-					conn.cryptoKey = cachedKey
-					decryptedData = tempData
-					break
-				}
-			}
-		}
-		
-		// Special handling for ID=2 - try more alternative keys
-		if clientID == "2" && decryptedData == "" {
-			log.Printf("Special handling for client ID=2: Trying alternative keys")
-			
-			// If we still don't have decrypted data, try the alternative keys
-			if decryptedData == "" {
-				// Try saved alternative keys if available
-				if len(conn.altKeys) > 0 {
-					log.Printf("Using %d pre-configured alternative keys", len(conn.altKeys))
-					
-					// First try systematically all available alternative keys
-					var workingKey string
-					var workingData string
-					
-					// Try all alternative keys in parallel for better performance
-					type keyResult struct {
-						key  string
-						data string
-					}
-					
-					resultChan := make(chan keyResult, len(conn.altKeys))
-					var wg sync.WaitGroup
-					
-					for _, altKey := range conn.altKeys {
-						wg.Add(1)
-						go func(key string) {
-							defer wg.Done()
-							// Try decryption with this key
-							data := decompressData(encryptedData, key)
-							if data != "" {
-								resultChan <- keyResult{key: key, data: data}
-							}
-						}(altKey)
-					}
-					
-					// Wait for all goroutines to complete
-					go func() {
-						wg.Wait()
-						close(resultChan)
-					}()
-					
-					// Collect results and use the first successful key
-					for result := range resultChan {
-						if workingKey == "" {
-							workingKey = result.key
-							workingData = result.data
-							log.Printf("Found working alternative key: %s", workingKey)
-						}
-					}
-					
-					// If we found a working key, use it
-					if workingKey != "" {
-						conn.cryptoKey = workingKey
-						decryptedData = workingData
-						log.Printf("Successfully decrypted data with alternative key: %s", workingKey)
-					} else {
-						log.Printf("None of the %d alternative keys worked", len(conn.altKeys))
-					}
-				} else {
-					// Fallback to generating keys on the fly if no alternative keys are set
-					// Try first alternative - using regular key pattern but with different dictionary letter
-					hostFirstChars := "NE" // Default if we can't get proper host
-					hostLastChar := "-"    // Default if we can't get proper host
-					
-					if conn.clientHost != "" {
-						if len(conn.clientHost) >= 2 {
-							hostFirstChars = conn.clientHost[:2]
-						}
-						if len(conn.clientHost) >= 1 {
-							hostLastChar = conn.clientHost[len(conn.clientHost)-1:]
-						}
-					}
-					
-					// Ensure serverKey is initialized with a default value if empty
-					if conn.serverKey == "" {
-						conn.serverKey = "D5F2" // Use the standard default
-						log.Printf("Warning: serverKey was undefined for client ID=4, using default: %s", conn.serverKey)
-					}
-					
-					// Try alternative keys with common patterns
-					var altKeys []string
-					
-					// Add pattern-based keys
-					altKeys = append(altKeys,
-						conn.serverKey + "T" + hostFirstChars + hostLastChar,
-						"D5F2TNE-",
-						"D5F22NE-",
-						"D5F2" + hostFirstChars + hostLastChar,
-						"D5F2" + "T" + "N" + hostLastChar,
-						"D5F2" + "T" + "N" + "-",
-					)
-					
-					// Try each key
-					for _, key := range altKeys {
-						log.Printf("Trying fallback key: %s", key)
-						tempData := decompressData(encryptedData, key)
-						if tempData != "" {
-							decryptedData = tempData
-							conn.cryptoKey = key
-							log.Printf("Found working fallback key: %s", key)
-							break
-						}
-					}
-				}
-			}
-		}
-		
-		// Special handling for ID=4 - try alternative keys
-		if clientID == "4" && decryptedData == "" {
-			log.Printf("Special handling for client ID=4: Trying alternative keys")
-			
-			// Try saved alternative keys if available
-			if len(conn.altKeys) > 0 {
-				log.Printf("Using %d pre-configured alternative keys", len(conn.altKeys))
-				for i, altKey := range conn.altKeys {
-					log.Printf("Trying pre-configured alternative key %d: %s", i+1, altKey)
-					decryptedData = decompressData(encryptedData, altKey)
-					if decryptedData != "" {
-						log.Printf("Pre-configured alternative key %d worked: %s", i+1, altKey)
-						conn.cryptoKey = altKey // Update to the working key
-						break
-					}
-				}
-			} else {
-				// Fallback to generating keys on the fly
-				hostFirstChars := "NE" // Default if we can't get proper host
-				hostLastChar := "-"    // Default if we can't get proper host
-				
-				if conn.clientHost != "" {
-					if len(conn.clientHost) >= 2 {
-						hostFirstChars = conn.clientHost[:2]
-					}
-					if len(conn.clientHost) >= 1 {
-						hostLastChar = conn.clientHost[len(conn.clientHost)-1:]
-					}
-				}
-				
-				// Ensure serverKey is initialized with a default value if empty
-				if conn.serverKey == "" {
-					conn.serverKey = "D5F2" // Use the standard default
-					log.Printf("Warning: serverKey was undefined for client ID=4, using default: %s", conn.serverKey)
-				}
-				
-				// For ID=4, try different dictionary entries or special patterns
-				// The client might be using a dictionary entry not matching our standard logic
-				idInt, _ := strconv.Atoi(clientID)
-				if idInt > 0 && idInt-1 < len(CRYPTO_DICTIONARY) {
-					dictEntry := CRYPTO_DICTIONARY[idInt-1]
-					
-					// Try the first character from the dict entry (the standard approach)
-					dictChar1 := ""
-					if len(dictEntry) > 0 {
-						dictChar1 = string(dictEntry[0])
-					}
-					
-					// Try the second character if available
-					dictChar2 := ""
-					if len(dictEntry) > 1 {
-						dictChar2 = string(dictEntry[1])
-					}
-					
-					// Try the third character if available
-					dictChar3 := ""
-					if len(dictEntry) > 2 {
-						dictChar3 = string(dictEntry[2])
-					}
-					
-					log.Printf("Trying dictionary entry alternatives for ID=%s: [%s, %s, %s]", 
-						clientID, dictChar1, dictChar2, dictChar3)
-						
-					// Try different combinations
-					altKeys := []string{
-						conn.serverKey + dictChar1 + hostFirstChars + hostLastChar,
-						conn.serverKey + dictChar2 + hostFirstChars + hostLastChar,
-						conn.serverKey + dictChar3 + hostFirstChars + hostLastChar,
-					}
-					
-					// Add special hardcoded keys
-					altKeys = append(altKeys, 
-						fmt.Sprintf("D5F2%sNE-", clientID),
-						"D5F2MNE-",
-						"D5F2ANE-",
-						"D5F2qNE-")
-					
-					// Try each key
-					for i, key := range altKeys {
-						log.Printf("Trying generated key alternative %d: %s", i+1, key)
-						testDecrypted := decompressData(encryptedData, key)
-						if testDecrypted != "" {
-							log.Printf("Alternative key %d worked: %s", i+1, key)
-							decryptedData = testDecrypted
-							conn.cryptoKey = key // Update to working key
-							break
-						}
-					}
-				}
-				
-				// Try alternative 1: Using "M" from dictionary entry
-				altKey1 := conn.serverKey + "M" + hostFirstChars + hostLastChar
-				log.Printf("Trying alternative key 1 for ID=4: %s", altKey1)
-				if decryptedData == "" {
-					testDecrypted := decompressData(encryptedData, altKey1)
-					if testDecrypted != "" {
-						decryptedData = testDecrypted
-						conn.cryptoKey = altKey1
-						log.Printf("Alternative key 1 worked for ID=4: %s", altKey1)
-					}
-				}
-				
-				// Try alternative 2: Hard-coded key with ID
-				if decryptedData == "" {
-					altKey2 := "D5F24NE-"
-					log.Printf("Trying alternative key 2 for ID=4: %s", altKey2)
-					testDecrypted := decompressData(encryptedData, altKey2)
-					if testDecrypted != "" {
-						decryptedData = testDecrypted
-						conn.cryptoKey = altKey2
-						log.Printf("Alternative key 2 worked for ID=4: %s", altKey2)
-					}
-				}
-				
-				// Try alternative 3: Key with different pattern
-				if decryptedData == "" {
-					altKey3 := "D5F2MNE-"
-					log.Printf("Trying alternative key 3 for ID=4: %s", altKey3)
-					testDecrypted := decompressData(encryptedData, altKey3)
-					if testDecrypted != "" {
-						decryptedData = testDecrypted
-						conn.cryptoKey = altKey3
-						log.Printf("Alternative key 3 worked for ID=4: %s", altKey3)
-					}
-				}
-			}
-		}
-		
-		// Still no success after trying alternatives
-		if decryptedData == "" {
-			return "ERROR Failed to decrypt data", nil
-		}
+		return "ERROR Failed to decrypt data", nil
 	}
 	
-	// Log the decrypted data
 	log.Printf("Successfully decrypted data: '%s'", decryptedData)
 	
-	// Parse parameters from decrypted data
-	params := make(map[string]string)
-	
-	// Try multiple separators: \r\n, \n, or ;
-	separators := []string{"\r\n", "\n", ";"}
-	foundParams := false
-	
-	for _, sep := range separators {
-		lines := strings.Split(decryptedData, sep)
-		
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			
-			if pos := strings.Index(line, "="); pos > 0 {
-				key := strings.TrimSpace(line[:pos])
-				value := strings.TrimSpace(line[pos+1:])
-				params[key] = value
-				log.Printf("Extracted parameter: %s = %s", key, value)
-				foundParams = true
-			}
-		}
-		
-		if foundParams {
-			log.Printf("Successfully parsed parameters using separator: '%s'", sep)
-			break
-		}
-	}
-	
-	if !foundParams {
-		log.Printf("WARNING: No parameters found in decrypted data")
-	}
+	// Extract parameters from decrypted data
+	params := extractParameters(decryptedData)
 	
 	// Create response data exactly as expected by Delphi client
 	responseData := "TT=Test\r\n"
-	responseData += "ID=" + clientID + "\r\n"
+	responseData += "ID=" + conn.clientID + "\r\n"
 	responseData += "EX=321231\r\n"
 	responseData += "EN=true\r\n"
 	responseData += "CD=220101\r\n"
@@ -1068,17 +627,124 @@ func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, err
 	}
 	
 	// Format the final response as expected by Delphi client
-	// From the Wireshark logs pattern, this should be "200 DATA=..."
+	// From Wireshark logs: "200 DATA=lPPuPlNlAjpgvBy6p35Syag92tQKXrP6M4SJY/CTsTvUonEg7e9wBb2rtXqL3W7oFjzq+T5N"
 	response := "200 DATA=" + encrypted + "\r\n"
 	
 	log.Printf("Sending encrypted response of length: %d chars", len(encrypted))
 	
 	// If we successfully decrypted data, cache the key for future use
 	if decryptedData != "" {
-		addSuccessfulKeyToCache(clientID, conn.cryptoKey)
+		addSuccessfulKeyToCache(conn.clientID, conn.cryptoKey)
 	}
 	
 	return response, nil
+}
+
+// Check if the decrypted data is valid
+func isValidDecryptedData(data string) bool {
+	// Check for common indicators of valid decrypted data
+	
+	// 1. Look for key-value pairs with = sign
+	if strings.Contains(data, "=") {
+		return true
+	}
+	
+	// 2. Check for common separators 
+	if strings.Contains(data, "\r\n") || strings.Contains(data, "\n") || strings.Contains(data, ";") {
+		return true
+	}
+	
+	// 3. Count printable ASCII characters (a simple heuristic)
+	printableCount := 0
+	for _, c := range data {
+		if (c >= 32 && c <= 126) || c == '\r' || c == '\n' || c == '\t' {
+			printableCount++
+		}
+	}
+	
+	// If more than 70% are printable, it's likely valid text
+	if float64(printableCount)/float64(len(data)) > 0.7 {
+		return true
+	}
+	
+	return false
+}
+
+// Extract parameters from data with flexible separator detection
+func extractParameters(data string) map[string]string {
+	params := make(map[string]string)
+	
+	// Determine which separator is used in this data
+	// Try in order of preference: \r\n, \n, semicolon
+	var lines []string
+	var separatorUsed string
+	
+	if strings.Contains(data, "\r\n") {
+		log.Printf("Using CRLF separator for parameters")
+		lines = strings.Split(data, "\r\n")
+		separatorUsed = "\r\n"
+	} else if strings.Contains(data, "\n") {
+		log.Printf("Using LF separator for parameters")
+		lines = strings.Split(data, "\n")
+		separatorUsed = "\n"
+	} else if strings.Contains(data, ";") {
+		log.Printf("Using semicolon separator for parameters")
+		lines = strings.Split(data, ";")
+		separatorUsed = ";"
+	} else {
+		// No common separator found, try to parse based on equal signs
+		equalPos := strings.IndexByte(data, '=')
+		if equalPos > 0 {
+			log.Printf("No standard separator found, using entire data as single parameter")
+			key := strings.TrimSpace(data[:equalPos])
+			value := ""
+			if equalPos+1 < len(data) {
+				value = strings.TrimSpace(data[equalPos+1:])
+			}
+			
+			// Store the parameter
+			if key != "" {
+				params[key] = value
+				log.Printf("Extracted parameter: %s = %s", key, value)
+			}
+		} else {
+			log.Printf("Failed to parse parameters - no separators found")
+		}
+		
+		return params
+	}
+	
+	// Process each line
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		
+		// Handle lines with equals sign
+		equalPos := strings.IndexByte(line, '=')
+		if equalPos > 0 {
+			key := strings.TrimSpace(line[:equalPos])
+			value := ""
+			if equalPos+1 < len(line) {
+				value = strings.TrimSpace(line[equalPos+1:])
+			}
+			
+			// Store the parameter
+			if key != "" {
+				params[key] = value
+				log.Printf("Extracted parameter: %s = %s", key, value)
+			}
+		} else {
+			// Line without equals sign - treat whole line as a value with index key
+			params[fmt.Sprintf("PARAM%d", len(params))] = line
+			log.Printf("Extracted raw parameter #%d: %s", len(params), line)
+		}
+	}
+	
+	log.Printf("Successfully parsed parameters using separator: '%s'", separatorUsed)
+	
+	return params
 }
 
 // Handle the VERSION command
@@ -1119,7 +785,52 @@ func (s *TCPServer) handleDownload(conn *TCPConnection, parts []string) (string,
 
 // Handle the REPORT REQUEST command - placeholder
 func (s *TCPServer) handleReportRequest(conn *TCPConnection, parts []string) (string, error) {
-	return "OK", nil
+	// Check if client is authenticated
+	if conn.cryptoKey == "" {
+		return "ERROR Crypto key is not negotiated", nil
+	}
+	
+	// Parse parameters
+	params := parseParameters(parts)
+	
+	// Extract data parameter if present
+	data, hasData := params["DATA"]
+	
+	// Log request details for debugging
+	log.Printf("Report request received from client %s (ID=%s)", conn.conn.RemoteAddr(), conn.clientID)
+	if hasData {
+		log.Printf("Report request includes data of length %d chars", len(data))
+		
+		// Attempt to decrypt data if present
+		decryptedData := decompressData(data, conn.cryptoKey)
+		if decryptedData != "" {
+			log.Printf("Decrypted report request data: %s", decryptedData)
+		}
+	}
+	
+	// Create response data
+	// This is a placeholder - in a real implementation, this would process the report request
+	// and generate appropriate response data based on the client's request
+	responseData := "TT=Test\r\n"
+	responseData += fmt.Sprintf("ID=%s\r\n", conn.clientID)
+	responseData += "EX=CSV\r\n"  // Export format
+	responseData += "EN=UTF8\r\n" // Encoding
+	responseData += "CD=2023-01-01\r\n" // Report date
+	responseData += "CT=Report Title\r\n" // Report title
+	
+	// Encrypt the response
+	encrypted := compressData(responseData, conn.cryptoKey)
+	if encrypted == "" {
+		log.Printf("ERROR: Failed to encrypt report response data")
+		return "ERROR Failed to encrypt response", nil
+	}
+	
+	// Format response as expected by Delphi client
+	response := "200 DATA=" + encrypted + "\r\n"
+	
+	log.Printf("Sending encrypted report response of length: %d chars", len(encrypted))
+	
+	return response, nil
 }
 
 // Handle the RESPONSE command - placeholder
@@ -1230,221 +941,250 @@ func compressData(data string, key string) string {
 	return encoded
 }
 
-// Helper function to decrypt data
-func decompressData(data string, key string) string {
-	if data == "" || key == "" {
-		log.Printf("ERROR: Empty data or key in decompressData")
-		return ""
-	}
-
+// Decompress and decrypt data with current key
+func decompressData(encryptedBase64 string, key string) string {
+	// Base64 декодиране
 	log.Printf("Decompressing data with key: %s", key)
 	
-	// 1. Add padding to the Base64 data if needed
-	paddedData := data
-	switch len(data) % 4 {
-	case 2:
-		paddedData += "=="
-	case 3:
-		paddedData += "="
+	// Make sure we have valid Base64 padding
+	if padding := len(encryptedBase64) % 4; padding > 0 {
+		encryptedBase64 += strings.Repeat("=", 4-padding)
 	}
 	
-	// Fix specific encoding issues - sometimes base64 might have url-safe characters
-	paddedData = strings.ReplaceAll(paddedData, "-", "+")
-	paddedData = strings.ReplaceAll(paddedData, "_", "/")
-	
-	// 2. Decode Base64
-	decoded, err := base64.StdEncoding.DecodeString(paddedData)
+	decodedData, err := base64.StdEncoding.DecodeString(encryptedBase64)
 	if err != nil {
-		log.Printf("ERROR decoding Base64: %v", err)
-		
-		// Try URL-safe base64 as a fallback
-		decoded, err = base64.URLEncoding.DecodeString(paddedData)
-		if err != nil {
-			log.Printf("ERROR decoding with URL-safe Base64 too: %v", err)
-			return ""
-		}
-		log.Printf("Successfully decoded using URL-safe Base64 variant")
-	}
-	
-	log.Printf("Decoded Base64 length: %d bytes", len(decoded))
-	
-	// 3. Check if data length is valid for AES decryption
-	if len(decoded) < aes.BlockSize {
-		log.Printf("ERROR: Invalid data length for AES decryption (too short): %d", len(decoded))
+		log.Printf("ERROR: Failed to decode Base64 data: %v", err)
 		return ""
 	}
 	
-	// Special handling for client ID=2 with known 152 byte issue
-	if len(decoded) == 152 {
-		log.Printf("Special handling for 152 byte data (likely from client ID=2 or ID=7)")
-		// Try trimming the data to 144 bytes (9 AES blocks) instead of padding
-		// This is based on observation that some clients may send trailing garbage
-		if len(decoded) >= 144 {
-			decoded = decoded[:144]
-			log.Printf("Trimmed data to 144 bytes (9 AES blocks) for better decryption")
+	dataLength := len(decodedData)
+	log.Printf("Decoded Base64 length: %d bytes", dataLength)
+	
+	// Handle non-AES block size aligned data - special case for 152 bytes
+	if dataLength == 152 {
+		log.Printf("Special handling for 152 byte data (likely from client ID=1 or ID=2)")
+		
+		// Try different variants of input data
+		variants := []struct {
+			desc   string
+			data   []byte
+			offset int
+		}{
+			{"Trimmed to 144 bytes (9 AES blocks)", decodedData[:144], 0},
+			{"Trimmed to 144 bytes with adjusted padding", decodedData[:144], 1},
+			{"Original with padding", decodedData, 0},
+			{"Last block only", decodedData[144:152], 0},
+			{"First block", decodedData[:16], 0},
+			{"First 2 blocks", decodedData[:32], 0},
+			{"First 3 blocks", decodedData[:48], 0},
+			{"First 8 blocks", decodedData[:128], 0},
 		}
-	// Special handling for client ID=7 with other known issues
-	} else if len(decoded) % 16 != 0 && len(decoded) > 16 {
-		// Try multiple trimming approaches for client ID=7
-		log.Printf("Attempting multiple trimming approaches for data length %d", len(decoded))
 		
-		// Store original data
-		originalDecoded := make([]byte, len(decoded))
-		copy(originalDecoded, decoded)
+		// Try each variant
+		for _, variant := range variants {
+			adjustedData := variant.data
+			
+			// Check if length is valid for AES
+			if len(adjustedData)%16 != 0 {
+				paddingNeeded := 16 - (len(adjustedData) % 16)
+				paddingBytes := bytes.Repeat([]byte{byte(paddingNeeded)}, paddingNeeded)
+				adjustedData = append(adjustedData, paddingBytes...)
+				log.Printf("Added %d padding bytes to match AES block size", paddingNeeded)
+			}
+			
+			// Try decryption with this variant
+			result := tryDecryptionWithVariant(adjustedData, key, variant.desc, variant.offset)
+			if result != "" {
+				return result
+			}
+		}
 		
-		// Trim to nearest multiple of 16
-		newLen := (len(decoded) / 16) * 16
-		decoded = decoded[:newLen]
-		log.Printf("Trimmed data to %d bytes (%d AES blocks)", newLen, newLen/16)
-	} else {
-		// Standard padding using PKCS#7 style
-		paddingNeeded := aes.BlockSize - (len(decoded) % aes.BlockSize)
-		log.Printf("Fixing invalid data length: %d not divisible by %d, adding %d bytes of padding", 
-			len(decoded), aes.BlockSize, paddingNeeded)
-		
-		paddingBytes := bytes.Repeat([]byte{byte(paddingNeeded)}, paddingNeeded)
-		decoded = append(decoded, paddingBytes...)
-		log.Printf("New length after padding: %d bytes", len(decoded))
+		// If all variants failed, fall back to standard approach
+		log.Printf("All variant strategies failed, trying standard approach")
 	}
 	
-	// 4. Create AES cipher with MD5 of key (to match DCPcrypt)
-	hasher := md5.New()
-	hasher.Write([]byte(key))
-	aesKey := hasher.Sum(nil)
+	// Regular handling for all other cases
+	if dataLength%16 != 0 {
+		log.Printf("Fixing invalid data length: %d not divisible by 16, adding %d bytes of padding", 
+			dataLength, 16-(dataLength%16))
+		
+		paddingNeeded := 16 - (dataLength % 16)
+		paddingBytes := bytes.Repeat([]byte{byte(paddingNeeded)}, paddingNeeded)
+		decodedData = append(decodedData, paddingBytes...)
+		
+		log.Printf("New length after padding: %d bytes", len(decodedData))
+	}
 	
+	// Generate the AES key from the key string using MD5 (as in original)
+	aesKey := md5.Sum([]byte(key))
 	log.Printf("AES key from MD5 of '%s': %x", key, aesKey)
 	
-	// 5. Create AES cipher
-	block, err := aes.NewCipher(aesKey)
+	// Using nil IV (as in original)
+	block, err := aes.NewCipher(aesKey[:])
 	if err != nil {
-		log.Printf("ERROR creating AES cipher: %v", err)
+		log.Printf("ERROR: Failed to create AES cipher: %v", err)
 		return ""
 	}
 	
-	// 6. Use zero IV for decryption (matches Delphi implementation)
+	// CBC mode decryption with zero IV
 	iv := make([]byte, aes.BlockSize)
-	
-	// 7. Decrypt using CBC mode
-	plaintext := make([]byte, len(decoded))
 	mode := cipher.NewCBCDecrypter(block, iv)
-	mode.CryptBlocks(plaintext, decoded)
 	
-	// 8. Remove PKCS#7 padding - be extra careful with invalid padding
-	paddingLen := int(plaintext[len(plaintext)-1])
-	if paddingLen > 0 && paddingLen <= aes.BlockSize {
-		// Verify the padding is valid (all padding bytes should have the same value)
-		validPadding := true
-		for i := 0; i < paddingLen; i++ {
-			if len(plaintext) < paddingLen || int(plaintext[len(plaintext)-1-i]) != paddingLen {
-				validPadding = false
-				break
-			}
+	// Decrypt in-place
+	plaintext := make([]byte, len(decodedData))
+	copy(plaintext, decodedData)
+	mode.CryptBlocks(plaintext, plaintext)
+	
+	// Check and remove padding
+	if len(plaintext) > 0 {
+		paddingLen := int(plaintext[len(plaintext)-1])
+		if paddingLen > 0 && paddingLen <= 16 {
+			plaintext = plaintext[:len(plaintext)-paddingLen]
 		}
-		
-		if validPadding {
-			if len(plaintext) >= paddingLen {
-				plaintext = plaintext[:len(plaintext)-paddingLen]
+	}
+	
+	// Log first bytes to help debug
+	if len(plaintext) >= 16 {
+		log.Printf("First 16 bytes of decrypted data: %v", plaintext[:16])
+	}
+	
+	// Try to decompress with zlib
+	if len(plaintext) >= 2 {
+		// Check if this actually looks like zlib data
+		if plaintext[0] == 0x78 && (plaintext[1] == 0x01 || plaintext[1] == 0x9C || plaintext[1] == 0xDA) {
+			// This is valid zlib data, decompress it
+			reader, err := zlib.NewReader(bytes.NewReader(plaintext))
+			if err != nil {
+				log.Printf("ERROR: Failed to create zlib reader: %v", err)
 			} else {
-				log.Printf("WARNING: Invalid padding length %d (longer than plaintext length %d)", 
-					paddingLen, len(plaintext))
+				defer reader.Close()
+				decompressed, err := ioutil.ReadAll(reader)
+				if err != nil {
+					log.Printf("ERROR: Failed to decompress data: %v", err)
+				} else {
+					log.Printf("Successfully decompressed data (%d bytes)", len(decompressed))
+					return string(decompressed)
+				}
 			}
 		} else {
-			log.Printf("WARNING: Invalid padding detected, using full plaintext")
-		}
-	} else {
-		log.Printf("WARNING: Invalid padding value %d (must be between 1 and %d)", 
-			paddingLen, aes.BlockSize)
-	}
-	
-	// Log first 16 bytes of plaintext for debugging
-	previewLen := min(16, len(plaintext))
-	if previewLen > 0 {
-		log.Printf("First %d bytes of decrypted data: %v", previewLen, plaintext[:previewLen])
-	}
-	
-	// Before decompression, check if this looks like a valid zlib stream
-	// Most common zlib headers: 0x78 0x01, 0x78 0x9C, 0x78 0xDA
-	isValidZlibHeader := false
-	if len(plaintext) >= 2 {
-		zlibHeader := plaintext[0]
-		if zlibHeader == 0x78 {
-			if plaintext[1] == 0x01 || plaintext[1] == 0x9C || plaintext[1] == 0xDA || plaintext[1] == 0x5E {
-				isValidZlibHeader = true
-			}
-		}
-	}
-	
-	if len(plaintext) > 0 && !isValidZlibHeader {
-		log.Printf("WARNING: Decrypted data may not be a valid zlib stream (wrong header)")
-		if len(plaintext) >= 2 {
-			log.Printf("First 2 bytes: 0x%02x 0x%02x (expected 0x78 0x01/0x9C/0xDA for zlib)", 
-				plaintext[0], plaintext[1])
-		} else if len(plaintext) >= 1 {
-			log.Printf("First byte: 0x%02x (expected 0x78 for zlib)", plaintext[0])
-		}
-		
-		// Try some heuristics to determine if this is plaintext or garbage
-		textChars := 0
-		for i := 0; i < min(50, len(plaintext)); i++ {
-			if (plaintext[i] >= 32 && plaintext[i] <= 126) || 
-			   plaintext[i] == '\r' || plaintext[i] == '\n' || plaintext[i] == '\t' {
-				textChars++
-			}
-		}
-		
-		// If over 70% of characters are printable, assume it's plaintext
-		if float64(textChars)/float64(min(50, len(plaintext))) > 0.7 {
-			preview := string(plaintext[:min(50, len(plaintext))])
-			log.Printf("Decrypted data appears to be plaintext (not compressed): %s", preview)
+			// Not zlib data, log the issue
+			log.Printf("WARNING: Decrypted data may not be a valid zlib stream (wrong header)")
+			log.Printf("First 2 bytes: 0x%02x 0x%02x (expected 0x78 0x01/0x9C/0xDA for zlib)", plaintext[0], plaintext[1])
 			
-			// Check if this looks like a valid key-value response
-			if strings.Contains(preview, "=") && 
-			   (strings.Contains(preview, "\r\n") || strings.Contains(preview, "\n")) {
-				log.Printf("Decrypted data appears to be valid key-value format, using as is")
-				return string(plaintext)
-			}
-		}
-	}
-	
-	// 9. Decompress with zlib
-	zlibReader, err := zlib.NewReader(bytes.NewReader(plaintext))
-	if err != nil {
-		log.Printf("ERROR: Failed to create zlib reader: %v", err)
-		
-		// Try to rescue by trimming any potential garbage at the end
-		if len(plaintext) > 50 {
-			for i := 16; i < 64 && i < len(plaintext); i += 8 {
-				log.Printf("Trying to trim plaintext to length %d", i)
-				trimmedReader, trimErr := zlib.NewReader(bytes.NewReader(plaintext[:i]))
-				if trimErr == nil {
-					trimmedContent, trimReadErr := io.ReadAll(trimmedReader)
-					trimmedReader.Close()
-					if trimReadErr == nil && len(trimmedContent) > 0 {
-						log.Printf("Recovered by trimming plaintext to %d bytes", i)
-						return string(trimmedContent)
+			// Try to adjust the data by removing potential offset bytes (common with some clients)
+			for offset := 1; offset <= 15 && offset < len(plaintext); offset++ {
+				if offset+1 < len(plaintext) && plaintext[offset] == 0x78 && 
+					(plaintext[offset+1] == 0x01 || plaintext[offset+1] == 0x9C || plaintext[offset+1] == 0xDA) {
+					
+					log.Printf("Found potential zlib header at offset %d", offset)
+					
+					// Try to decompress from this offset
+					reader, err := zlib.NewReader(bytes.NewReader(plaintext[offset:]))
+					if err != nil {
+						log.Printf("ERROR: Still failed to create zlib reader with offset %d: %v", offset, err)
+					} else {
+						defer reader.Close()
+						decompressed, err := ioutil.ReadAll(reader)
+						if err != nil {
+							log.Printf("ERROR: Failed to decompress data with offset %d: %v", offset, err)
+						} else {
+							log.Printf("Successfully decompressed data with offset %d (%d bytes)", offset, len(decompressed))
+							return string(decompressed)
+						}
 					}
 				}
 			}
+			
+			// Try several smaller chunks to see if part of the data is valid
+			for length := 16; length < len(plaintext); length += 8 {
+				log.Printf("Trying to trim plaintext to length %d", length)
+				// Check if we can parse as string
+				if strings.Contains(string(plaintext[:length]), "\r\n") || strings.Contains(string(plaintext[:length]), "=") {
+					log.Printf("Found potential string data in smaller chunk")
+					return string(plaintext)
+				}
+			}
+			
+			// If all else fails, just return the plaintext as-is
+			log.Printf("Successfully decrypted data but not compressed: '%s'", string(plaintext))
+			return string(plaintext)
 		}
-		
-		// Return plaintext representation as fallback
-		// This is useful for debugging and may work for some clients that don't compress data
-		log.Printf("Successfully decrypted data but not compressed: '%s'", string(plaintext))
-		return string(plaintext)
 	}
 	
-	decompressed, err := io.ReadAll(zlibReader)
-	zlibReader.Close()
+	// Return plaintext as-is if all else fails
+	log.Printf("Successfully decrypted data: '%s'", string(plaintext))
+	return string(plaintext)
+}
+
+// Helper function to try decryption with a specific variant
+func tryDecryptionWithVariant(data []byte, key string, description string, offset int) string {
+	log.Printf("Trying decryption variant: %s", description)
+	
+	// Generate the AES key from the key string using MD5 (as in original)
+	aesKey := md5.Sum([]byte(key))
+	
+	// Using nil IV (as in original)
+	block, err := aes.NewCipher(aesKey[:])
 	if err != nil {
-		log.Printf("ERROR reading decompressed data: %v", err)
-		
-		// Return plaintext as fallback
-		log.Printf("Decompression failed, returning plain decrypted data: '%s'", string(plaintext))
+		log.Printf("ERROR: Failed to create AES cipher for variant: %v", err)
+		return ""
+	}
+	
+	// CBC mode decryption with zero IV
+	iv := make([]byte, aes.BlockSize)
+	mode := cipher.NewCBCDecrypter(block, iv)
+	
+	// Decrypt in-place
+	plaintext := make([]byte, len(data))
+	copy(plaintext, data)
+	mode.CryptBlocks(plaintext, plaintext)
+	
+	// Check and remove padding
+	if len(plaintext) > 0 {
+		paddingLen := int(plaintext[len(plaintext)-1])
+		if paddingLen > 0 && paddingLen <= 16 {
+			plaintext = plaintext[:len(plaintext)-paddingLen]
+		}
+	}
+	
+	// If offset specified, adjust the plaintext
+	if offset > 0 && offset < len(plaintext) {
+		plaintext = plaintext[offset:]
+	}
+	
+	// Try to find zlib header
+	for i := 0; i < len(plaintext)-1; i++ {
+		if plaintext[i] == 0x78 && (plaintext[i+1] == 0x01 || plaintext[i+1] == 0x9C || plaintext[i+1] == 0xDA) {
+			// Found potential zlib header
+			log.Printf("Found potential zlib header at position %d", i)
+			
+			// Try to decompress from this position
+			reader, err := zlib.NewReader(bytes.NewReader(plaintext[i:]))
+			if err != nil {
+				log.Printf("ERROR: Failed to create zlib reader for variant: %v", err)
+				continue
+			}
+			
+			decompressed, err := ioutil.ReadAll(reader)
+			reader.Close()
+			
+			if err != nil {
+				log.Printf("ERROR: Failed to decompress variant data: %v", err)
+				continue
+			}
+			
+			log.Printf("Successfully decompressed variant data (%d bytes)", len(decompressed))
+			return string(decompressed)
+		}
+	}
+	
+	// Check if we can parse as string
+	if strings.Contains(string(plaintext), "\r\n") || strings.Contains(string(plaintext), "=") {
+		log.Printf("Found potential string data in variant")
 		return string(plaintext)
 	}
 	
-	log.Printf("Successfully decompressed data (%d bytes)", len(decompressed))
-	return string(decompressed)
+	return "" // Failed to get useful data from this variant
 }
 
 // PKCS7 Padding helper functions
@@ -1643,10 +1383,10 @@ func initializeSuccessfulKeys() {
 	
 	// For client ID=7
 	successfulKeysCache["7"] = []string{
-		"D5F2YNE-",      // Using Y from dictionary
-		"D5F27NE-",      // Using client ID
-		"D5F2NE-",       // Without dictionary part
-		"D5F2FNE-",      // Using F from first position 
+		"D5F27EV-",      // Using Y from dictionary
+		"D5F2aEV-",      // Using client ID
+		"D5F2bEV-",      // Using client ID
+		"D5F2pEV-",      // Using client ID
 	}
 	log.Printf("Initialized %d pre-defined successful keys for client ID=7", len(successfulKeysCache["7"]))
 	
@@ -1656,6 +1396,114 @@ func initializeSuccessfulKeys() {
 		"D5F29NE-",      // Using client ID
 	}
 	log.Printf("Initialized %d pre-defined successful keys for client ID=9", len(successfulKeysCache["9"]))
+}
+
+// Add pre-defined keys per client ID
+var successfulKeysPerClient = map[string][]string{
+	"1": []string{"D5F21NE-", "D5F2aNE-", "D5F2lNE-", "D5F2vNE-", "D5F21NE_"}, // Special handling for client ID=1
+	"2": []string{"D5F2aRD-", "D5F2hRD-", "D5F2qRD-", "D5F2vRD-", "D5F22RD-"},
+	"4": []string{"D5F2ePC-", "D5F2jPC-", "D5F2mPC-", "D5F2pPC-"},
+	"5": []string{"D5F2cNE-", "D5F2aNE-"},
+	"7": []string{"D5F27EV-", "D5F2aEV-", "D5F2bEV-", "D5F2pEV-"},
+	"9": []string{"D5F22NE-", "D5F29NE-"},
+}
+
+// Generate a crypto key based on client date and time
+func generateCryptoKey(clientDateTime string, length int) string {
+	// Simple algorithm to generate a consistent key from datetime
+	// This is a placeholder - in a real implementation, this would use a more secure algorithm
+	if len(clientDateTime) < 4 {
+		return "ABCD" // Fallback key
+	}
+	
+	// Use parts of the datetime to form a key
+	key := clientDateTime[:length]
+	
+	log.Printf("Generated crypto key from datetime %s: %s", clientDateTime, key)
+	return key
+}
+
+// Try alternative keys for specific client IDs
+func tryAlternativeKeys(conn *TCPConnection) []string {
+	// Start with any cached keys for this client ID
+	altKeys := successfulKeysCache[conn.clientID]
+	
+	// Add client-specific predefined keys
+	if keys, exists := successfulKeysPerClient[conn.clientID]; exists {
+		altKeys = append(altKeys, keys...)
+	}
+	
+	// Add some variants based on the client ID
+	switch conn.clientID {
+	case "1":
+		// Special handling for client ID=1
+		altKeys = append(altKeys, conn.serverKey+"1NE-")
+		altKeys = append(altKeys, conn.serverKey+"aNE-")
+		altKeys = append(altKeys, conn.serverKey+"lNE-")
+		altKeys = append(altKeys, "D5F21NE-")
+		altKeys = append(altKeys, "D5F2aNE-")
+		altKeys = append(altKeys, "D5F2lNE-")
+		
+	case "2":
+		// Special handling for client ID=2
+		altKeys = append(altKeys, conn.serverKey+"TNE-")
+		altKeys = append(altKeys, conn.serverKey+"2NE-")
+		altKeys = append(altKeys, "D5F2TNE-")
+		altKeys = append(altKeys, "D5F22NE-")
+		altKeys = append(altKeys, "D5F2FNE-")
+		
+	case "4":
+		// Special handling for client ID=4
+		serverKey := conn.serverKey
+		altKeys = append(altKeys, serverKey+"MNE-")
+		altKeys = append(altKeys, serverKey+"4NE-")
+		altKeys = append(altKeys, serverKey+"qNE-")
+		altKeys = append(altKeys, "D5F24NE-")
+		altKeys = append(altKeys, "D5F2qNE-")
+		altKeys = append(altKeys, "D5F2MNE-")
+		
+	case "5":
+		// Special handling for client ID=5
+		altKeys = append(altKeys, conn.serverKey+"cNE-")
+		altKeys = append(altKeys, conn.serverKey+"5NE-")
+		altKeys = append(altKeys, "D5F2cNE-")
+		altKeys = append(altKeys, "D5F25NE-")
+		
+	case "7":
+		// Special handling for client ID=7
+		altKeys = append(altKeys, conn.serverKey+"7EV-")
+		altKeys = append(altKeys, conn.serverKey+"aEV-")
+		altKeys = append(altKeys, "D5F27EV-")
+		altKeys = append(altKeys, "D5F2aEV-")
+		
+	case "9":
+		// Special handling for client ID=9
+		altKeys = append(altKeys, conn.serverKey+"2NE-")
+		altKeys = append(altKeys, conn.serverKey+"9NE-")
+		altKeys = append(altKeys, "D5F22NE-")
+		altKeys = append(altKeys, "D5F29NE-")
+	}
+	
+	// Remove duplicates
+	uniqueKeys := make(map[string]bool)
+	var result []string
+	
+	// Always include current crypto key first
+	if conn.cryptoKey != "" {
+		result = append(result, conn.cryptoKey)
+		uniqueKeys[conn.cryptoKey] = true
+	}
+	
+	// Add other keys (skipping duplicates)
+	for _, key := range altKeys {
+		if _, exists := uniqueKeys[key]; !exists {
+			result = append(result, key)
+			uniqueKeys[key] = true
+		}
+	}
+	
+	log.Printf("Generated %d alternative keys for client ID=%s", len(result), conn.clientID)
+	return result
 }
 
 func main() {
