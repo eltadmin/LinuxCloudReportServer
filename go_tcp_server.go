@@ -1572,7 +1572,7 @@ var successfulKeysPerClient = map[string][]string{
 	"6": {"D5F26NE-", "D5F2NNE-", "D5F2NEL-", "D5F2NEW-"}, 
 	"7": {"D5F2YNE-", "D5F2YEV-", "D5F27EV-", "D5F2YGN-"},
 	"8": {"D028MSNNE-", "D028MSN-", "D028MNE-", "D028M>-", "D028MN-"}, 
-	"9": {"D5F22NE-", "D5F29NE-"}
+	"9": {"D5F22NE-", "D5F29NE-"},
 }
 
 // Generate a crypto key based on client date and time
