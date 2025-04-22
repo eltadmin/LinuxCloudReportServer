@@ -571,6 +571,18 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 		return fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", conn.serverKey, 1), nil
 	}
 
+	// Special case for client ID=3
+	if conn.clientID == "3" {
+		// Use the hardcoded key for client ID=3
+		conn.cryptoKey = "D5F2aNE-"
+		conn.altKeys = tryAlternativeKeys(conn) // Generate alternative keys
+		log.Printf("Using special hardcoded key for ID=3: %s (with %d alt keys)", 
+			conn.cryptoKey, len(conn.altKeys))
+		
+		// Return D5F2 as KEY and LEN=1 for client ID=3
+		return fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", conn.serverKey, 1), nil
+	}
+
 	// Special case for client ID=4
 	if conn.clientID == "4" {
 		// Use the hardcoded key for client ID=4
@@ -1171,6 +1183,16 @@ func decompressData(encryptedBase64 string, key string) string {
 	
 	// Ensure decodedData is a multiple of the block size
 	if len(decodedData)%aes.BlockSize != 0 {
+		// Fix the padding so it's definitely a multiple of 16 bytes
+		paddingNeeded := aes.BlockSize - (len(decodedData) % aes.BlockSize)
+		paddingBytes := bytes.Repeat([]byte{byte(paddingNeeded)}, paddingNeeded)
+		decodedData = append(decodedData, paddingBytes...)
+		log.Printf("Added %d padding bytes to ensure data length (%d) is multiple of block size", 
+			paddingNeeded, len(decodedData))
+	}
+	
+	// Double-check to make absolutely sure the length is correct
+	if len(decodedData)%aes.BlockSize != 0 {
 		log.Printf("CRITICAL ERROR: Data length %d is still not aligned with AES block size after padding!", len(decodedData))
 		return ""
 	}
@@ -1285,6 +1307,14 @@ func tryDecryptionWithVariant(data []byte, key string, description string, offse
 	}
 	
 	// Ensure data is a multiple of the block size
+	if len(data)%aes.BlockSize != 0 {
+		// Fix the padding so it's a multiple of 16 bytes
+		paddingNeeded := aes.BlockSize - (len(data) % aes.BlockSize)
+		paddingBytes := bytes.Repeat([]byte{byte(paddingNeeded)}, paddingNeeded)
+		data = append(data, paddingBytes...)
+		log.Printf("Added %d padding bytes to variant data to ensure block size alignment", paddingNeeded)
+	}
+	
 	if len(data)%aes.BlockSize != 0 {
 		log.Printf("ERROR: Variant data length %d is not a multiple of block size", len(data))
 		return ""
@@ -1530,6 +1560,19 @@ func initializeSuccessfulKeys() {
 	}
 	log.Printf("Initialized %d pre-defined successful keys for client ID=2", len(successfulKeysCache["2"]))
 	
+	// For client ID=3
+	successfulKeysCache["3"] = []string{
+		"D5F2aNE-",      // Primary hardcoded key for ID=3
+		"D5F23NE-",      // Using client ID
+		"D5F2ANE-",      // Using uppercase variation
+		"D5F2a--",       // Simple variant
+		"D5F2NE-",       // Without dictionary part
+		"D5F2BNE-",      // Using different dictionary letter
+		"D5F2ABA-",      // Alternative pattern
+		"D5F2ADA-",      // Alternative pattern based on dictionary "a6xbBa7A8a9la"
+	}
+	log.Printf("Initialized %d pre-defined successful keys for client ID=3", len(successfulKeysCache["3"]))
+	
 	// For client ID=4
 	successfulKeysCache["4"] = []string{
 		"D5F2ePC-",      // Primary hardcoded key for ID=4
@@ -1600,6 +1643,7 @@ func initializeSuccessfulKeys() {
 var successfulKeysPerClient = map[string][]string{
 	"1": {"D5F21NE-", "D5F2aNE-", "D5F2lNE-", "D5F2vNE-", "D5F21NE_"}, 
 	"2": {"D5F2aRD-", "D5F2hRD-", "D5F2qRD-", "D5F2vRD-", "D5F22RD-"},
+	"3": {"D5F2aNE-", "D5F2a--", "D5F23NE-", "D5F2NE-", "D5F2ABA-", "D5F2ADA-", "D5F2ABN-", "D5F2BNE-"},
 	"4": {"D5F2ePC-", "D5F2jPC-", "D5F2mPC-", "D5F2pPC-", "D5F24PC-", "D5F2qPC-", "D5F2qNE-", "D5F24NE-", "D5F2MNE-", "D5F2NE-", "D5F2ND-", "D5F2eND-", "D5F2jND-", "D5F2qND-", "D5F24ND-", "D5F2PND-", "D5F2NDA-", "D5F2NEW-"},
 	"5": {"D5F2cNE-", "D5F2aNE-"},
 	"6": {"D5F26NE-", "D5F2NNE-", "D5F2NEL-", "D5F2NEW-"}, 
@@ -1656,6 +1700,30 @@ func tryAlternativeKeys(conn *TCPConnection) []string {
 		altKeys = append(altKeys, "D5F2TNE-")
 		altKeys = append(altKeys, "D5F22NE-")
 		altKeys = append(altKeys, "D5F2FNE-")
+		
+	case "3":
+		// Special handling for client ID=3
+		altKeys = append(altKeys, conn.serverKey+"aNE-")
+		altKeys = append(altKeys, conn.serverKey+"3NE-")
+		altKeys = append(altKeys, conn.serverKey+"ANE-")
+		altKeys = append(altKeys, "D5F2aNE-")
+		altKeys = append(altKeys, "D5F23NE-")
+		altKeys = append(altKeys, "D5F2ANE-")
+		
+		// Try host-based variations if available
+		if conn.clientHST != "" && len(conn.clientHST) >= 2 {
+			hostFirstChars := conn.clientHST[:2]
+			altKeys = append(altKeys, conn.serverKey+hostFirstChars+"E-")
+			altKeys = append(altKeys, "D5F2"+hostFirstChars+"E-")
+			// For NEWLPT-NDANAIL hostname patterns
+			altKeys = append(altKeys, "D5F2NE-")
+			altKeys = append(altKeys, "D5F2NDA-")
+		}
+		
+		// Dictionary entry is "a6xbBa7A8a9la", so add these variants
+		altKeys = append(altKeys, "D5F2ABA-")
+		altKeys = append(altKeys, "D5F2ADA-")
+		altKeys = append(altKeys, "D5F2ABN-")
 		
 	case "4":
 		// Special handling for client ID=4
