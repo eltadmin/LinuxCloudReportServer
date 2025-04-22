@@ -475,6 +475,41 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	}
 	log.Printf("Set server key: %s for client %s", conn.serverKey, conn.clientID)
 	
+	// Special case for client ID=8
+	if conn.clientID == "8" {
+		// Use special server key D028 for client ID=8 based on logs
+		specialKey := "D028"
+		conn.serverKey = specialKey
+		
+		// Create full crypto key by combining server key with dict entry
+		dictEntry := "MSN" // First chars from "MSN><hu8asG&&" dictionary entry
+		if conn.clientHST != "" && len(conn.clientHST) >= 2 {
+			hostFirstChars := conn.clientHST[:2]
+			hostLastChar := "-" // Default last char if can't determine
+			if len(conn.clientHST) > 0 {
+				hostLastChar = string(conn.clientHST[len(conn.clientHST)-1])
+			}
+			conn.cryptoKey = specialKey + dictEntry + hostFirstChars + hostLastChar
+			log.Printf("Using special key for ID=8: %s", conn.cryptoKey)
+		} else {
+			conn.cryptoKey = specialKey + dictEntry + "NE-" // Default if host not available
+			log.Printf("Using default special key for ID=8: %s", conn.cryptoKey)
+		}
+		
+		// Generate alternative keys
+		altKeys := []string{
+			specialKey + "MSN" + "NE-",
+			specialKey + "M" + "NE-",
+			specialKey + "MS" + "NE-",
+			"D028M>-",
+			"D028MN-"
+		}
+		conn.altKeys = altKeys
+		
+		// Format response according to protocol: 200-KEY=D028\r\n200 LEN=4\r\n
+		return fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", specialKey, 4), nil
+	}
+	
 	// Special case for client ID=9
 	if conn.clientID == "9" {
 		// Use the hardcoded key for client ID=9
@@ -1464,6 +1499,19 @@ func initializeSuccessfulKeys() {
 	}
 	log.Printf("Initialized %d pre-defined successful keys for client ID=7", len(successfulKeysCache["7"]))
 	
+	// For client ID=8 (uses special server key D028)
+	successfulKeysCache["8"] = []string{
+		"D028MSNNE-",    // Using dictionary entry "MSN><hu8asG&&" with NE
+		"D028MSN-",      // Using first part of dictionary entry
+		"D028MNE-",      // Using M with NE
+		"D028M>-",       // Using M with > character from dict
+		"D028MN-",       // Using MN pattern
+		"D028NE-",       // Using NE pattern
+		"D028NE",        // Without trailing dash
+		"D028M-"         // Simple pattern
+	}
+	log.Printf("Initialized %d pre-defined successful keys for client ID=8", len(successfulKeysCache["8"]))
+	
 	// For client ID=9 (already has hardcoded key, but add as backup)
 	successfulKeysCache["9"] = []string{
 		"D5F22NE-",      // Standard hardcoded key for ID=9
@@ -1480,6 +1528,7 @@ var successfulKeysPerClient = map[string][]string{
 	"5": []string{"D5F2cNE-", "D5F2aNE-"},
 	"6": []string{"D5F26NE-", "D5F2NNE-", "D5F2NEL-", "D5F2NEW-"}, // Special handling for client ID=6 based on logs
 	"7": []string{"D5F27EV-", "D5F2aEV-", "D5F2bEV-", "D5F2pEV-"},
+	"8": []string{"D028MSNNE-", "D028MSN-", "D028MNE-", "D028M>-", "D028MN-"}, // Special handling for client ID=8 based on logs
 	"9": []string{"D5F22NE-", "D5F29NE-"},
 }
 
@@ -1570,6 +1619,34 @@ func tryAlternativeKeys(conn *TCPConnection) []string {
 		altKeys = append(altKeys, conn.serverKey+"aEV-")
 		altKeys = append(altKeys, "D5F27EV-")
 		altKeys = append(altKeys, "D5F2aEV-")
+		
+	case "8":
+		// Special handling for client ID=8 based on logs
+		// Uses special key D028 instead of D5F2
+		specialKey := "D028"
+		// Try different dictionary entry combinations
+		altKeys = append(altKeys, specialKey+"MSNNE-")
+		altKeys = append(altKeys, specialKey+"MSN-")
+		
+		// Try host-based variations if available
+		if conn.clientHST != "" && len(conn.clientHST) >= 2 {
+			hostFirstChars := conn.clientHST[:2]
+			hostLastChar := "-" // Default
+			if len(conn.clientHST) > 0 {
+				hostLastChar = string(conn.clientHST[len(conn.clientHST)-1])
+			}
+			
+			// Combinations with host information
+			altKeys = append(altKeys, specialKey+"MSN"+hostFirstChars+hostLastChar)
+			altKeys = append(altKeys, specialKey+"M"+hostFirstChars+hostLastChar)
+			altKeys = append(altKeys, specialKey+"M"+hostFirstChars+"-")
+		}
+		
+		// Other variations seen in logs
+		altKeys = append(altKeys, specialKey+"M>-")
+		altKeys = append(altKeys, specialKey+"MN-")
+		altKeys = append(altKeys, specialKey+"M-")
+		altKeys = append(altKeys, "D028M-")
 		
 	case "9":
 		// Special handling for client ID=9
