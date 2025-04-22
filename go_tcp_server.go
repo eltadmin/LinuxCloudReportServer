@@ -502,7 +502,7 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 			specialKey + "M" + "NE-",
 			specialKey + "MS" + "NE-",
 			"D028M>-",
-			"D028MN-"
+			"D028MN-",
 		}
 		conn.altKeys = altKeys
 		
@@ -1508,7 +1508,7 @@ func initializeSuccessfulKeys() {
 		"D028MN-",       // Using MN pattern
 		"D028NE-",       // Using NE pattern
 		"D028NE",        // Without trailing dash
-		"D028M-"         // Simple pattern
+		"D028M-",        // Simple pattern
 	}
 	log.Printf("Initialized %d pre-defined successful keys for client ID=8", len(successfulKeysCache["8"]))
 	
@@ -1522,14 +1522,14 @@ func initializeSuccessfulKeys() {
 
 // Add pre-defined keys per client ID
 var successfulKeysPerClient = map[string][]string{
-	"1": []string{"D5F21NE-", "D5F2aNE-", "D5F2lNE-", "D5F2vNE-", "D5F21NE_"}, // Special handling for client ID=1
-	"2": []string{"D5F2aRD-", "D5F2hRD-", "D5F2qRD-", "D5F2vRD-", "D5F22RD-"},
-	"4": []string{"D5F2ePC-", "D5F2jPC-", "D5F2mPC-", "D5F2pPC-"},
-	"5": []string{"D5F2cNE-", "D5F2aNE-"},
-	"6": []string{"D5F26NE-", "D5F2NNE-", "D5F2NEL-", "D5F2NEW-"}, // Special handling for client ID=6 based on logs
-	"7": []string{"D5F27EV-", "D5F2aEV-", "D5F2bEV-", "D5F2pEV-"},
-	"8": []string{"D028MSNNE-", "D028MSN-", "D028MNE-", "D028M>-", "D028MN-"}, // Special handling for client ID=8 based on logs
-	"9": []string{"D5F22NE-", "D5F29NE-"},
+	"1": {"D5F21NE-", "D5F2aNE-", "D5F2lNE-", "D5F2vNE-", "D5F21NE_"}, // Special handling for client ID=1
+	"2": {"D5F2aRD-", "D5F2hRD-", "D5F2qRD-", "D5F2vRD-", "D5F22RD-"},
+	"4": {"D5F2ePC-", "D5F2jPC-", "D5F2mPC-", "D5F2pPC-"},
+	"5": {"D5F2cNE-", "D5F2aNE-"},
+	"6": {"D5F26NE-", "D5F2NNE-", "D5F2NEL-", "D5F2NEW-"}, // Special handling for client ID=6 based on logs
+	"7": {"D5F27EV-", "D5F2aEV-", "D5F2bEV-", "D5F2pEV-"},
+	"8": {"D028MSNNE-", "D028MSN-", "D028MNE-", "D028M>-", "D028MN-"}, // Special handling for client ID=8 based on logs
+	"9": {"D5F22NE-", "D5F29NE-"},
 }
 
 // Generate a crypto key based on client date and time
