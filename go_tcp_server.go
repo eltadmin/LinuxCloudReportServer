@@ -1169,18 +1169,28 @@ func decompressData(encryptedBase64 string, key string) string {
 		return ""
 	}
 	
+	// Ensure decodedData is a multiple of the block size
+	if len(decodedData)%aes.BlockSize != 0 {
+		log.Printf("CRITICAL ERROR: Data length %d is still not aligned with AES block size after padding!", len(decodedData))
+		return ""
+	}
+	
 	// Create decrypter
 	iv := make([]byte, aes.BlockSize) // Use zero IV (16 bytes of zeros)
 	mode := cipher.NewCBCDecrypter(block, iv)
 	
-	// Decrypt AES
+	// Decrypt AES - make a copy to avoid modifying the original data
 	plaintext := make([]byte, len(decodedData))
-	mode.CryptBlocks(plaintext, decodedData)
+	copy(plaintext, decodedData)
+	
+	// Decrypt in-place
+	mode.CryptBlocks(plaintext, plaintext)
 	
 	// Check and remove padding
 	if len(plaintext) > 0 {
 		paddingLen := int(plaintext[len(plaintext)-1])
 		if paddingLen > 0 && paddingLen <= 16 {
+			log.Printf("Removing padding of length %d", paddingLen)
 			plaintext = plaintext[:len(plaintext)-paddingLen]
 		}
 	}
@@ -1263,12 +1273,20 @@ func tryDecryptionWithVariant(data []byte, key string, description string, offse
 	log.Printf("Trying decryption variant: %s", description)
 	
 	// Generate the AES key from the key string using MD5 (as in original)
-	aesKey := md5.Sum([]byte(key))
+	hasher := md5.New()
+	hasher.Write([]byte(key))
+	md5Key := hasher.Sum(nil)
 	
 	// Using nil IV (as in original)
-	block, err := aes.NewCipher(aesKey[:])
+	block, err := aes.NewCipher(md5Key)
 	if err != nil {
 		log.Printf("ERROR: Failed to create AES cipher for variant: %v", err)
+		return ""
+	}
+	
+	// Ensure data is a multiple of the block size
+	if len(data)%aes.BlockSize != 0 {
+		log.Printf("ERROR: Variant data length %d is not a multiple of block size", len(data))
 		return ""
 	}
 	
@@ -1276,15 +1294,18 @@ func tryDecryptionWithVariant(data []byte, key string, description string, offse
 	iv := make([]byte, aes.BlockSize)
 	mode := cipher.NewCBCDecrypter(block, iv)
 	
-	// Decrypt in-place
+	// Decrypt - make a copy to avoid modifying the original data
 	plaintext := make([]byte, len(data))
 	copy(plaintext, data)
+	
+	// Decrypt in-place
 	mode.CryptBlocks(plaintext, plaintext)
 	
 	// Check and remove padding
 	if len(plaintext) > 0 {
 		paddingLen := int(plaintext[len(plaintext)-1])
 		if paddingLen > 0 && paddingLen <= 16 {
+			log.Printf("Removing padding of length %d", paddingLen)
 			plaintext = plaintext[:len(plaintext)-paddingLen]
 		}
 	}
