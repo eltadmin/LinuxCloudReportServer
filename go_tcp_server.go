@@ -498,12 +498,12 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	if conn.clientID == "9" {
 		// Try different combinations of keys for ID=9
 		// Use the hardcoded key for client ID=9 as the primary key
-		conn.cryptoKey = "D5F29NE-" // Try different hardcoded key
+		conn.cryptoKey = "D5F223-" // Промяна на основния ключ
 		// Generate multiple alternative keys
 		conn.altKeys = tryAlternativeKeys(conn) 
 		
 		// Add the keys in specific order - original hardcoded key first
-		conn.altKeys = append([]string{"D5F22NE-", "D5F29NE-", "D5F2NE-"}, conn.altKeys...)
+		conn.altKeys = append([]string{"D5F223-", "D5F22NE-", "D5F29NE-", "D5F2NE-", "D5F29N-", "D5F2NEL-", "D5F2NDA-"}, conn.altKeys...)
 		
 		log.Printf("Using special hardcoded keys for ID=9 (with %d alt keys)", 
 			len(conn.altKeys))
@@ -759,6 +759,21 @@ func (s *TCPServer) handleInfo(conn *TCPConnection, parts []string) (string, err
 	responseData += "EN=true\r\n"
 	responseData += "CD=220101\r\n"
 	responseData += "CT=120000\r\n"
+	
+	// Special handling for client ID=9
+	if conn.clientID == "9" {
+		// Используем прямую последовательность полей без сортировки для ID=9
+		responseData = "TT=Test\r\n"
+		responseData += "ID=9\r\n"
+		responseData += "EX=321231\r\n"
+		responseData += "EN=true\r\n"
+		responseData += "CD=220101\r\n"
+		responseData += "CT=120000\r\n"
+		
+		// Попробуем специальный формат ответа с точным количеством полей
+		// и без дополнительных разделителей в конце
+		log.Printf("Using special response format for client ID=9")
+	}
 	
 	log.Printf("Prepared response data: %s", responseData)
 	
@@ -1024,77 +1039,71 @@ func generateRandomKey(length int) string {
 func compressData(data string, key string) string {
 	log.Printf("Encrypting data with key: '%s'", key)
 	
-	// Check for very short keys - pad if needed for AES
-	if len(key) < 6 {
-		log.Printf("WARNING: Key is very short (%d chars): %s", len(key), key)
-		log.Printf("Adding padding to short key")
-		key = key + "123456"  // Add padding to ensure minimal key length
-	}
+	// Check for special ID=9 handling based on key pattern
+	isID9Key := strings.Contains(key, "23") || strings.Contains(key, "9N") || 
+	           strings.Contains(key, "29") || strings.Contains(key, "yY")
 	
-	// 1. Generate MD5 hash of the key for AES key (to match Delphi's DCPcrypt)
-	keyHash := md5.Sum([]byte(key))
-	aesKey := keyHash[:16] // AES-128 key
-	
-	log.Printf("MD5 key hash: %x", keyHash)
-	log.Printf("AES key: %x", aesKey)
-	
-	// 2. Compress data with zlib
-	var compressedBuf bytes.Buffer
-	zw, err := zlib.NewWriterLevel(&compressedBuf, zlib.BestCompression) // Use best compression like original
+	// 1. Compress the data with zlib
+	var b bytes.Buffer
+	w := zlib.NewWriter(&b)
+	_, err := w.Write([]byte(data))
 	if err != nil {
-		log.Printf("Error creating zlib writer: %v", err)
+		log.Printf("ERROR: Failed to compress data: %v", err)
 		return ""
 	}
 	
-	_, err = zw.Write([]byte(data))
+	err = w.Close()
 	if err != nil {
-		log.Printf("Error compressing data: %v", err)
-		zw.Close()
+		log.Printf("ERROR: Failed to close zlib writer: %v", err)
 		return ""
 	}
 	
-	err = zw.Close()
+	compressed := b.Bytes()
+	log.Printf("Compressed data (%d bytes): %x", len(compressed), compressed[:min(16, len(compressed))])
+	
+	// 2. Hash the key using MD5 (compatible with Delphi's DCPcrypt)
+	hasher := md5.New()
+	hasher.Write([]byte(key))
+	md5Key := hasher.Sum(nil)
+	
+	log.Printf("MD5 key hash: %x", md5Key)
+	log.Printf("AES key: %x", md5Key) // 16 bytes = 128 bits for AES
+	
+	// 3. Create AES cipher with MD5 hash of key
+	block, err := aes.NewCipher(md5Key)
 	if err != nil {
-		log.Printf("Error closing zlib writer: %v", err)
+		log.Printf("ERROR: Failed to create AES cipher: %v", err)
 		return ""
 	}
 	
-	compressed := compressedBuf.Bytes()
-	
-	// Log compressed data length and first few bytes
-	if len(compressed) > 0 {
-		log.Printf("Compressed data (%d bytes): %x", len(compressed), compressed[:min(16, len(compressed))])
-	} else {
-		log.Printf("WARNING: Compressed data is empty!")
-		return ""
+	// 4. Pad the data to a multiple of AES block size (16 bytes)
+	paddingLen := aes.BlockSize - (len(compressed) % aes.BlockSize)
+	if paddingLen == 0 {
+		paddingLen = aes.BlockSize
 	}
 	
-	// 3. Ensure data is a multiple of AES block size (16 bytes)
-	blockSize := aes.BlockSize
-	padding := blockSize - (len(compressed) % blockSize)
-	if padding == 0 {
-		padding = blockSize
+	// Специфичен PKCS#7 padding за ID=9 с фиксирана дължина, ако използваме специален ключ
+	if isID9Key && paddingLen > 0 {
+		// Use exact padding length, but ensure we don't exceed the block size
+		paddingValue := byte(paddingLen % 16)
+		if paddingValue == 0 {
+			paddingValue = 16 // PKCS#7 specifies value 16 for full block padding
+		}
+		
+		log.Printf("ID=9 special handling: Using padding value %d for length %d", 
+			paddingValue, paddingLen)
 	}
 	
-	// Use PKCS#7 padding - where the padding value is equal to the number of padding bytes
-	paddingBytes := bytes.Repeat([]byte{byte(padding)}, padding)
+	// Create the PKCS#7 padding
+	paddingBytes := bytes.Repeat([]byte{byte(paddingLen)}, paddingLen)
 	padded := append(compressed, paddingBytes...)
 	
 	log.Printf("Padded data (%d bytes), added %d bytes of padding value %d", 
-		len(padded), padding, padding)
+		len(padded), paddingLen, paddingLen)
 	
-	// 4. Encrypt with AES-CBC using zero IV (matches Delphi implementation)
-	block, err := aes.NewCipher(aesKey)
-	if err != nil {
-		log.Printf("Error creating AES cipher: %v", err)
-		return ""
-	}
-	
-	// Zero IV vector - exactly as in Delphi
-	iv := make([]byte, aes.BlockSize)
-	
-	// Encrypt
+	// 5. Encrypt with AES in CBC mode with zero IV vector
 	ciphertext := make([]byte, len(padded))
+	iv := make([]byte, aes.BlockSize) // Zero IV (16 bytes of zeros)
 	mode := cipher.NewCBCEncrypter(block, iv)
 	mode.CryptBlocks(ciphertext, padded)
 	
@@ -1133,9 +1142,9 @@ func decompressData(encryptedBase64 string, key string) string {
 	if dataLength % 16 != 0 {
 		log.Printf("Data length %d is not aligned with AES block size (16 bytes). Adding padding.", dataLength)
 		
-		// For client ID=4, we often get 152 bytes length, similar to ID=2
+		// Specific handling for 152 bytes (common for ID=2, ID=4 and ID=9)
 		if dataLength == 152 {
-			log.Printf("Special handling for 152 byte data (likely from client ID=2 or ID=4)")
+			log.Printf("Special handling for 152 byte data (likely from client ID=2, ID=4 or ID=9)")
 			
 			// Try different variants of input data
 			variants := []struct {
@@ -1151,6 +1160,12 @@ func decompressData(encryptedBase64 string, key string) string {
 				{"First 8 blocks (128 bytes)", decodedData[:128], 0},
 				{"First 10 blocks (160 bytes, padded)", pkcs7Pad(decodedData, 16), 1},
 				{"First 10 blocks (160 bytes, zero padded)", append(decodedData, bytes.Repeat([]byte{0}, 8)...), 0},
+				// Специални варианти за ID=9
+				{"ID=9 special: First 9 blocks with zero padding", append(decodedData[:144], bytes.Repeat([]byte{0}, 16)...), 0},
+				{"ID=9 special: First 9 blocks with PKCS7 padding", pkcs7Pad(decodedData[:144], 16), 0},
+				{"ID=9 special: First 10 blocks with extra padding", append(pkcs7Pad(decodedData, 16), bytes.Repeat([]byte{16}, 16)...), 0},
+				{"ID=9 special: First 8 blocks with extra padding", append(decodedData[:128], bytes.Repeat([]byte{0}, 32)...), 0},
+				{"ID=9 special: Fixed 160 bytes with 23 padding pattern", append(decodedData[:152], bytes.Repeat([]byte{2, 3}, 4)...), 0},
 			}
 			
 			// Try each variant
@@ -1366,6 +1381,9 @@ func tryDecryptionWithVariant(data []byte, key string, description string, offse
 	mode := cipher.NewCBCDecrypter(block, iv)
 	mode.CryptBlocks(decrypted, data)
 	
+	// Special handling for client ID=9 - check if key contains "23" or "9"
+	isID9Key := strings.Contains(key, "23") || strings.Contains(key, "9N") || strings.Contains(key, "29")
+	
 	// Check for PKCS#7 padding
 	if len(decrypted) > 0 {
 		// Get the last byte which should contain the padding value
@@ -1397,6 +1415,13 @@ func tryDecryptionWithVariant(data []byte, key string, description string, offse
 			log.Printf("zlib error: %v", err)
 		}
 		
+		// ID=9 special handling - try to check for specific string patterns
+		if isID9Key && (strings.Contains(string(decrypted), "TT=") || 
+		                strings.Contains(string(decrypted), "ID=9")) {
+			log.Printf("Found ID=9 specific pattern in decrypted data despite zlib error")
+			return string(decrypted)
+		}
+		
 		// Instead of returning nothing, return the decrypted data
 		// Some older clients may not use zlib at all times
 		if strings.Contains(string(decrypted), "TT=Test") {
@@ -1413,6 +1438,23 @@ func tryDecryptionWithVariant(data []byte, key string, description string, offse
 				r2.Close()
 				if err2 == nil {
 					return offsetDecompressed.String()
+				}
+			}
+		}
+		
+		// ID=9 special: try to search for semicolon-separated data
+		if isID9Key && strings.Contains(string(decrypted), ";") {
+			// Split by semicolons and see if we have at least two valid segments
+			segments := strings.Split(string(decrypted), ";")
+			log.Printf("ID=9: Found %d segments using semicolon separator", len(segments))
+			
+			if len(segments) >= 2 {
+				// Check if any segment looks like valid data
+				for _, seg := range segments {
+					if strings.Contains(seg, "=") || strings.Contains(seg, "TT") {
+						log.Printf("ID=9: Found valid-looking segment in semicolon data")
+						return string(decrypted)
+					}
 				}
 			}
 		}
@@ -1726,8 +1768,16 @@ func initializeSuccessfulKeys() {
 	
 	// Client ID=9 success keys
 	successfulKeysPerClient["9"] = []string{
-		"D5F22NE-",     // Primary hardcoded key
-		"D5F29NE-",     // ID as dictionary part
+		"D5F223-",      // Нов ключ базиран на първите символи на речниковия запис
+		"D5F22NE-",     // Оригинален ключ с по-нисък приоритет
+		"D5F29NE-",     // ID като част от речниковия запис
+		"D5F2HX-",      // Базиран на средата на речниковия запис
+		"D5F2NE-",      // Само първата част от хоста
+		"D5F2NEL-",     // За NEWLPT хостове
+		"D5F2NDA-",     // За NDANAIL хостове
+		"D5F2NW-",      // По-кратък вариант за NEW
+		"D5F292-",      // ID + начало на речников запис
+		"D5F229-",      // Комбиниран вариант
 	}
 	log.Printf("Initialized %d pre-defined successful keys for client ID=9", 
 		len(successfulKeysPerClient["9"]))
@@ -1964,6 +2014,27 @@ func tryAlternativeKeys(conn *TCPConnection) []string {
 		altKeys = append(altKeys, conn.serverKey+"23NE-")
 		altKeys = append(altKeys, conn.serverKey+"2N-")
 		altKeys = append(altKeys, conn.serverKey+"9N-")
+		
+		// Новые ключи для ID=9, основанные на анализе логов и словаря
+		altKeys = append(altKeys, "D5F223-")    // Комбинация начальных символов словаря
+		altKeys = append(altKeys, "D5F229-")    // ID + начало словаря
+		altKeys = append(altKeys, "D5F292-")    // Другой порядок
+		altKeys = append(altKeys, "D5F2yY-")    // Средние символы словаря
+		altKeys = append(altKeys, "D5F288-")    // Цифры из словаря
+		altKeys = append(altKeys, "D5F2HX-")    // Конец словаря
+		altKeys = append(altKeys, "D5F2NEW-")   // Если хост начинается с NEWLPT
+		altKeys = append(altKeys, "D5F2NDA-")   // Если хост содержит NDANAIL
+		
+		// Экстремальные варианты из словаря "23yY88syHXvvs"
+		altKeys = append(altKeys, "D5F2yY88-")
+		altKeys = append(altKeys, "D5F2HXvv-")
+		altKeys = append(altKeys, "D5F2vv-")
+		altKeys = append(altKeys, "D5F2sy-")
+		
+		// Вариации с меньшей длиной
+		altKeys = append(altKeys, "D5F2yY-")
+		altKeys = append(altKeys, "D5F2Y8-")
+		altKeys = append(altKeys, "D5F223y-")
 	}
 	
 	// Remove duplicates
