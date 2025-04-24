@@ -1056,10 +1056,6 @@ func generateRandomKey(length int) string {
 func compressData(data string, key string) string {
 	log.Printf("Encrypting data with key: '%s'", key)
 	
-	// Check for special ID=9 handling based on key pattern
-	isID9Key := strings.Contains(key, "23") || strings.Contains(key, "9N") || 
-	           strings.Contains(key, "29") || strings.Contains(key, "yY")
-	
 	// 1. Compress the data with zlib
 	var b bytes.Buffer
 	w := zlib.NewWriter(&b)
@@ -1209,23 +1205,24 @@ func decompressData(encryptedBase64 string, key string) string {
 			// Special handling for ID=1 if data length matches
 			if strings.Contains(key, "D5F21") {
 				log.Printf("Special handling for client ID=1 data with key: %s", key)
-				result = tryDecryptionWithVariant(decodedData, key, "ID=1 special: No padding changes", 0)
+				// Исправляю undefined переменную result
+				decryptResult := tryDecryptionWithVariant(decodedData, key, "ID=1 special: No padding changes", 0)
 				
-				if result == "" {
+				if decryptResult == "" {
 					log.Printf("Trying first 144 bytes with ID=1 special handling")
 					first144Bytes := decodedData[:144] // 9 blocks
-					result = tryDecryptionWithVariant(first144Bytes, key, "ID=1 special: First 9 blocks only", 1)
+					decryptResult = tryDecryptionWithVariant(first144Bytes, key, "ID=1 special: First 9 blocks only", 1)
 				}
 				
-				if result == "" {
+				if decryptResult == "" {
 					log.Printf("Trying with ID=1 specific padding")
 					padding := bytes.Repeat([]byte{8}, 8) // Padding with 8 bytes of value 8
 					paddedData := append(decodedData, padding...)
-					result = tryDecryptionWithVariant(paddedData, key, "ID=1 special: 8-byte specific padding", 2)
+					decryptResult = tryDecryptionWithVariant(paddedData, key, "ID=1 special: 8-byte specific padding", 2)
 				}
 				
-				if result != "" {
-					return result
+				if decryptResult != "" {
+					return decryptResult
 				}
 			}
 		} else {
