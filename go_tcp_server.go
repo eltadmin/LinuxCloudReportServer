@@ -481,30 +481,12 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 		specialKey := "D028"
 		conn.serverKey = specialKey
 		
-		// Create full crypto key by combining server key with dict entry
-		dictEntry := "MSN" // First chars from "MSN><hu8asG&&" dictionary entry
-		if conn.clientHST != "" && len(conn.clientHST) >= 2 {
-			hostFirstChars := conn.clientHST[:2]
-			hostLastChar := "-" // Default last char if can't determine
-			if len(conn.clientHST) > 0 {
-				hostLastChar = string(conn.clientHST[len(conn.clientHST)-1])
-			}
-			conn.cryptoKey = specialKey + dictEntry + hostFirstChars + hostLastChar
-			log.Printf("Using special key for ID=8: %s", conn.cryptoKey)
-		} else {
-			conn.cryptoKey = specialKey + dictEntry + "NE-" // Default if host not available
-			log.Printf("Using default special key for ID=8: %s", conn.cryptoKey)
-		}
+		// Create simpler crypto key - try "D028M-" as the primary key
+		conn.cryptoKey = specialKey + "M-"
 		
-		// Generate alternative keys
-		altKeys := []string{
-			specialKey + "MSN" + "NE-",
-			specialKey + "M" + "NE-",
-			specialKey + "MS" + "NE-",
-			"D028M>-",
-			"D028MN-",
-		}
-		conn.altKeys = altKeys
+		// Generate all possible alternative keys
+		conn.altKeys = tryAlternativeKeys(conn)
+		log.Printf("Using special key for ID=8: %s (with %d alt keys)", conn.cryptoKey, len(conn.altKeys))
 		
 		// Format response according to protocol: 200-KEY=D028\r\n200 LEN=4\r\n
 		return fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", specialKey, 4), nil
@@ -512,11 +494,17 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	
 	// Special case for client ID=9
 	if conn.clientID == "9" {
-		// Use the hardcoded key for client ID=9
-		conn.cryptoKey = "D5F22NE-"
-		conn.altKeys = tryAlternativeKeys(conn) // Generate alternative keys
-		log.Printf("Using special hardcoded key for ID=9: %s (with %d alt keys)", 
-			conn.cryptoKey, len(conn.altKeys))
+		// Try different combinations of keys for ID=9
+		// Use the hardcoded key for client ID=9 as the primary key
+		conn.cryptoKey = "D5F29NE-" // Try different hardcoded key
+		// Generate multiple alternative keys
+		conn.altKeys = tryAlternativeKeys(conn) 
+		
+		// Add the keys in specific order - original hardcoded key first
+		conn.altKeys = append([]string{"D5F22NE-", "D5F29NE-", "D5F2NE-"}, conn.altKeys...)
+		
+		log.Printf("Using special hardcoded keys for ID=9 (with %d alt keys)", 
+			len(conn.altKeys))
 		
 		// IMPORTANT: Return D5F2 as KEY and LEN=2 for client ID=9
 		// This matches the original server behavior that client expects
@@ -793,32 +781,47 @@ func contains(slice []string, item string) bool {
 
 // Check if the decrypted data is valid
 func isValidDecryptedData(data string) bool {
-	// Check for common indicators of valid decrypted data
-	
-	// 1. Look for key-value pairs with = sign
-	if strings.Contains(data, "=") {
-		return true
+	// Check if data contains common key-value pairs seen in client communications
+	commonPatterns := []string{
+		"TT=Test",
+		"ID=",
+		"ON=",
+		"FN=",
+		"FB=",
+		"FA=",
+		"HS=",
+		"AT=",
+		"AV=",
+		"DT=",
 	}
 	
-	// 2. Check for common separators 
-	if strings.Contains(data, "\r\n") || strings.Contains(data, "\n") || strings.Contains(data, ";") {
-		return true
+	// It's valid if it has at least one of these patterns
+	for _, pattern := range commonPatterns {
+		if strings.Contains(data, pattern) {
+			return true
+		}
 	}
 	
-	// 3. Count printable ASCII characters (a simple heuristic)
+	// Check for common separators
+	hasSeparators := strings.Contains(data, "\r\n") || 
+	                strings.Contains(data, "\n") || 
+	                strings.Contains(data, ";")
+	
+	// Check for typical key=value pattern
+	hasKeyValuePairs := strings.Count(data, "=") > 1
+	
+	// Check if mostly printable ASCII
 	printableCount := 0
 	for _, c := range data {
-		if (c >= 32 && c <= 126) || c == '\r' || c == '\n' || c == '\t' {
+		if c >= 32 && c <= 126 {
 			printableCount++
 		}
 	}
 	
-	// If more than 70% are printable, it's likely valid text
-	if float64(printableCount)/float64(len(data)) > 0.7 {
-		return true
-	}
+	printableRatio := float64(printableCount) / float64(len(data))
 	
-	return false
+	// Consider valid if it has separators, key-value pairs and is mostly printable
+	return hasSeparators && hasKeyValuePairs && printableRatio > 0.7
 }
 
 // Extract parameters from data with flexible separator detection
@@ -1127,14 +1130,14 @@ func decompressData(encryptedBase64 string, key string) string {
 				data   []byte
 				offset int
 			}{
+				{"Unmodified data with proper padding to 160 bytes", pkcs7Pad(decodedData, 16), 0},
+				{"Original data", decodedData, 0},
 				{"Trimmed to 144 bytes (9 AES blocks)", decodedData[:144], 0},
 				{"Trimmed to 144 bytes with adjusted padding", decodedData[:144], 1},
-				{"Original with padding", decodedData, 0},
-				{"Last block only", decodedData[144:152], 0},
-				{"First block", decodedData[:16], 0},
-				{"First 2 blocks", decodedData[:32], 0},
-				{"First 3 blocks", decodedData[:48], 0},
-				{"First 8 blocks", decodedData[:128], 0},
+				{"Truncate last block and pad correctly", pkcs7Pad(decodedData[:144], 16), 0},
+				{"First 8 blocks (128 bytes)", decodedData[:128], 0},
+				{"First 10 blocks (160 bytes, padded)", pkcs7Pad(decodedData, 16), 1},
+				{"First 10 blocks (160 bytes, zero padded)", append(decodedData, bytes.Repeat([]byte{0}, 8)...), 0},
 			}
 			
 			// Try each variant
@@ -1293,91 +1296,114 @@ func decompressData(encryptedBase64 string, key string) string {
 // Helper function to try decryption with a specific variant
 func tryDecryptionWithVariant(data []byte, key string, description string, offset int) string {
 	log.Printf("Trying decryption variant: %s", description)
+
+	// 1. Generate MD5 hash of the key for AES key
+	keyHash := md5.Sum([]byte(key))
+	aesKey := keyHash[:16]
 	
-	// Generate the AES key from the key string using MD5 (as in original)
-	hasher := md5.New()
-	hasher.Write([]byte(key))
-	md5Key := hasher.Sum(nil)
-	
-	// Using nil IV (as in original)
-	block, err := aes.NewCipher(md5Key)
+	// Must be a multiple of 16 bytes for AES
+	if len(data) % 16 != 0 {
+		log.Printf("Warning: AES data length %d is not a multiple of 16 bytes", len(data))
+		return ""
+	}
+
+	// 2. Decrypt the data
+	block, err := aes.NewCipher(aesKey)
 	if err != nil {
-		log.Printf("ERROR: Failed to create AES cipher for variant: %v", err)
+		log.Printf("Error creating AES cipher: %v", err)
 		return ""
 	}
-	
-	// Ensure data is a multiple of the block size
-	if len(data)%aes.BlockSize != 0 {
-		// Fix the padding so it's a multiple of 16 bytes
-		paddingNeeded := aes.BlockSize - (len(data) % aes.BlockSize)
-		paddingBytes := bytes.Repeat([]byte{byte(paddingNeeded)}, paddingNeeded)
-		data = append(data, paddingBytes...)
-		log.Printf("Added %d padding bytes to variant data to ensure block size alignment", paddingNeeded)
-	}
-	
-	if len(data)%aes.BlockSize != 0 {
-		log.Printf("ERROR: Variant data length %d is not a multiple of block size", len(data))
-		return ""
-	}
-	
-	// CBC mode decryption with zero IV
+
+	// Zero IV (matching Delphi implementation)
 	iv := make([]byte, aes.BlockSize)
+
+	// Decrypt
+	decrypted := make([]byte, len(data))
 	mode := cipher.NewCBCDecrypter(block, iv)
+	mode.CryptBlocks(decrypted, data)
 	
-	// Decrypt - make a copy to avoid modifying the original data
-	plaintext := make([]byte, len(data))
-	copy(plaintext, data)
-	
-	// Decrypt in-place
-	mode.CryptBlocks(plaintext, plaintext)
-	
-	// Check and remove padding
-	if len(plaintext) > 0 {
-		paddingLen := int(plaintext[len(plaintext)-1])
+	// Check for PKCS#7 padding
+	if len(decrypted) > 0 {
+		// Get the last byte which should contain the padding value
+		paddingLen := int(decrypted[len(decrypted)-1])
+		
+		// Valid PKCS#7 padding has a value from 1-16 and all padding bytes equal that value
 		if paddingLen > 0 && paddingLen <= 16 {
-			log.Printf("Removing padding of length %d", paddingLen)
-			plaintext = plaintext[:len(plaintext)-paddingLen]
+			valid := true
+			for i := len(decrypted) - paddingLen; i < len(decrypted); i++ {
+				if i < 0 || int(decrypted[i]) != paddingLen {
+					valid = false
+					break
+				}
+			}
+			
+			if valid {
+				// Remove padding
+				decrypted = decrypted[:len(decrypted)-paddingLen]
+			}
+		}
+	}
+
+	// Try to decompress with zlib
+	r, err := zlib.NewReader(bytes.NewReader(decrypted))
+	if err != nil {
+		// Skip logging common zlib errors to reduce noise
+		if !strings.Contains(err.Error(), "invalid header") && 
+		   !strings.Contains(err.Error(), "invalid checksum") {
+			log.Printf("zlib error: %v", err)
+		}
+		
+		// Instead of returning nothing, return the decrypted data
+		// Some older clients may not use zlib at all times
+		if strings.Contains(string(decrypted), "TT=Test") {
+			log.Printf("Found TT=Test in decrypted data despite zlib error, may be uncompressed")
+			return string(decrypted)
+		}
+		
+		// Try an offset into the data - some clients may have a prefix before the zlib data
+		if offset > 0 && offset < len(decrypted) {
+			r2, err2 := zlib.NewReader(bytes.NewReader(decrypted[offset:]))
+			if err2 == nil {
+				var offsetDecompressed bytes.Buffer
+				_, err2 = io.Copy(&offsetDecompressed, r2)
+				r2.Close()
+				if err2 == nil {
+					return offsetDecompressed.String()
+				}
+			}
+		}
+		
+		// If we found string data with common delimiters, return it
+		if isValidDecryptedData(string(decrypted)) {
+			log.Printf("Found potential string data in variant")
+			return string(decrypted)
+		}
+		
+		return ""
+	}
+
+	// Read all the decompressed data
+	var decompressed bytes.Buffer
+	_, err = io.Copy(&decompressed, r)
+	r.Close()
+	if err != nil {
+		log.Printf("Error decompressing data: %v", err)
+		return ""
+	}
+
+	// Get the decompressed result
+	result := decompressed.String()
+	
+	// Validate the decompressed data
+	if !isValidDecryptedData(result) {
+		if !strings.Contains(result, "TT=Test") {
+			log.Printf("Decompressed data doesn't look valid (missing TT=Test)")
+			return ""
 		}
 	}
 	
-	// If offset specified, adjust the plaintext
-	if offset > 0 && offset < len(plaintext) {
-		plaintext = plaintext[offset:]
-	}
-	
-	// Try to find zlib header
-	for i := 0; i < len(plaintext)-1; i++ {
-		if plaintext[i] == 0x78 && (plaintext[i+1] == 0x01 || plaintext[i+1] == 0x9C || plaintext[i+1] == 0xDA) {
-			// Found potential zlib header
-			log.Printf("Found potential zlib header at position %d", i)
-			
-			// Try to decompress from this position
-			reader, err := zlib.NewReader(bytes.NewReader(plaintext[i:]))
-			if err != nil {
-				log.Printf("ERROR: Failed to create zlib reader for variant: %v", err)
-				continue
-			}
-			
-			decompressed, err := ioutil.ReadAll(reader)
-			reader.Close()
-			
-			if err != nil {
-				log.Printf("ERROR: Failed to decompress variant data: %v", err)
-				continue
-			}
-			
-			log.Printf("Successfully decompressed variant data (%d bytes)", len(decompressed))
-			return string(decompressed)
-		}
-	}
-	
-	// Check if we can parse as string
-	if strings.Contains(string(plaintext), "\r\n") || strings.Contains(string(plaintext), "=") {
-		log.Printf("Found potential string data in variant")
-		return string(plaintext)
-	}
-	
-	return "" // Failed to get useful data from this variant
+	log.Printf("Successfully decrypted data: '%s'", result)
+	return result
 }
 
 // PKCS7 Padding helper functions
@@ -1794,9 +1820,42 @@ func tryAlternativeKeys(conn *TCPConnection) []string {
 		// Special handling for client ID=8 based on logs
 		// Uses special key D028 instead of D5F2
 		specialKey := "D028"
-		// Try different dictionary entry combinations
-		altKeys = append(altKeys, specialKey+"MSNNE-")
+		
+		// Try simpler formats first (most likely to work)
+		altKeys = append(altKeys, specialKey+"M-")
+		altKeys = append(altKeys, specialKey+"MN-")
 		altKeys = append(altKeys, specialKey+"MSN-")
+		
+		// Then try host-based variations if available
+		if conn.clientHST != "" && len(conn.clientHST) >= 2 {
+			hostFirstChars := conn.clientHST[:2]
+			hostLastChar := "-" // Default
+			if len(conn.clientHST) > 0 {
+				hostLastChar = string(conn.clientHST[len(conn.clientHST)-1])
+			}
+			
+			// Combinations with host information
+			altKeys = append(altKeys, specialKey+"M"+hostFirstChars+hostLastChar)
+			altKeys = append(altKeys, specialKey+"MSN"+hostFirstChars+hostLastChar)
+		}
+		
+		// Add variations from original implementation
+		altKeys = append(altKeys, specialKey+"MSNNE-")
+		altKeys = append(altKeys, specialKey+"MSN>-") 
+		altKeys = append(altKeys, specialKey+"M>-")
+		
+		// Add additional formats that might work
+		altKeys = append(altKeys, "D028")
+		altKeys = append(altKeys, "D028-")
+		
+	case "9":
+		// Special handling for client ID=9
+		altKeys = append(altKeys, conn.serverKey+"2NE-")
+		altKeys = append(altKeys, conn.serverKey+"9NE-")
+		altKeys = append(altKeys, conn.serverKey+"NE-")
+		altKeys = append(altKeys, "D5F22NE-")
+		altKeys = append(altKeys, "D5F29NE-")
+		altKeys = append(altKeys, "D5F2NE-")
 		
 		// Try host-based variations if available
 		if conn.clientHST != "" && len(conn.clientHST) >= 2 {
@@ -1806,24 +1865,15 @@ func tryAlternativeKeys(conn *TCPConnection) []string {
 				hostLastChar = string(conn.clientHST[len(conn.clientHST)-1])
 			}
 			
-			// Combinations with host information
-			altKeys = append(altKeys, specialKey+"MSN"+hostFirstChars+hostLastChar)
-			altKeys = append(altKeys, specialKey+"M"+hostFirstChars+hostLastChar)
-			altKeys = append(altKeys, specialKey+"M"+hostFirstChars+"-")
+			altKeys = append(altKeys, conn.serverKey+"2"+hostFirstChars+hostLastChar)
+			altKeys = append(altKeys, conn.serverKey+"9"+hostFirstChars+hostLastChar)
 		}
 		
-		// Other variations seen in logs
-		altKeys = append(altKeys, specialKey+"M>-")
-		altKeys = append(altKeys, specialKey+"MN-")
-		altKeys = append(altKeys, specialKey+"M-")
-		altKeys = append(altKeys, "D028M-")
-		
-	case "9":
-		// Special handling for client ID=9
-		altKeys = append(altKeys, conn.serverKey+"2NE-")
-		altKeys = append(altKeys, conn.serverKey+"9NE-")
-		altKeys = append(altKeys, "D5F22NE-")
-		altKeys = append(altKeys, "D5F29NE-")
+		// Try with dictionary entry "23yY88syHXvvs"
+		altKeys = append(altKeys, conn.serverKey+"23-")
+		altKeys = append(altKeys, conn.serverKey+"23NE-")
+		altKeys = append(altKeys, conn.serverKey+"2N-")
+		altKeys = append(altKeys, conn.serverKey+"9N-")
 	}
 	
 	// Remove duplicates
