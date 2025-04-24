@@ -55,6 +55,8 @@ var (
 	// Cache for successful crypto keys by client ID
 	successfulKeysCache = make(map[string][]string)
 	keysCacheMutex = sync.RWMutex{}
+	// Pre-defined successful keys per client ID
+	successfulKeysPerClient map[string][]string
 )
 
 // Command constants
@@ -538,8 +540,19 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	// Special case for client ID=6
 	if conn.clientID == "6" {
 		// Use the hardcoded key for client ID=6
-		conn.cryptoKey = "D5F26NE-"
+		conn.cryptoKey = "D5F2bNE-" // Changed from D5F26NE- to D5F2bNE-
 		conn.altKeys = tryAlternativeKeys(conn) // Generate alternative keys
+		
+		// Add more variations of keys as fallbacks
+		conn.altKeys = append([]string{
+			"D5F2bNE-", // First letter of dictionary entry "bab7u682ftysv"
+			"D5F26NE-", // Original key that wasn't working
+			"D5F2b6-",  // Mix of dictionary entry and client ID
+			"D5F2fNE-", // Try 'f' from dictionary entry
+			"D5F26PE-", // New variation
+			"D5F2baE-", // First two letters from dictionary
+		}, conn.altKeys...)
+		
 		log.Printf("Using special hardcoded key for ID=6: %s (with %d alt keys)", 
 			conn.cryptoKey, len(conn.altKeys))
 		
@@ -1272,11 +1285,42 @@ func decompressData(encryptedBase64 string, key string) string {
 				}
 			}
 			
+			// Enhanced detection for semicolon-separated values (no compression)
+			if strings.Contains(string(plaintext), ";") {
+				log.Printf("Using semicolon separator for parameters")
+				params := strings.Split(string(plaintext), ";")
+				for i, param := range params {
+					log.Printf("Extracted raw parameter #%d: %s", i+1, param)
+				}
+				if len(params) > 0 {
+					log.Printf("Successfully parsed parameters using separator: ';'")
+					log.Printf("Extracted %d parameters from decrypted data", len(params))
+					return string(plaintext)
+				}
+			}
+			
+			// Enhanced detection for uncompressed data with TT=Test
+			if strings.Contains(string(plaintext), "TT=Test") || 
+			   strings.Contains(string(plaintext), "ID=") {
+				log.Printf("Found TT=Test or ID= in uncompressed data - client may not be using compression")
+				// Try to parse as key-value pairs
+				lines := strings.Split(string(plaintext), "\r\n")
+				if len(lines) <= 1 {
+					lines = strings.Split(string(plaintext), "\n")
+				}
+				if len(lines) > 1 {
+					log.Printf("Successfully parsed %d lines from uncompressed data", len(lines))
+					return string(plaintext)
+				}
+			}
+			
 			// Try several smaller chunks to see if part of the data is valid
 			for length := 16; length < len(plaintext); length += 8 {
 				log.Printf("Trying to trim plaintext to length %d", length)
 				// Check if we can parse as string
-				if strings.Contains(string(plaintext[:length]), "\r\n") || strings.Contains(string(plaintext[:length]), "=") {
+				if strings.Contains(string(plaintext[:length]), "\r\n") || 
+				   strings.Contains(string(plaintext[:length]), "=") || 
+				   strings.Contains(string(plaintext[:length]), ";") {
 					log.Printf("Found potential string data in smaller chunk")
 					return string(plaintext)
 				}
@@ -1561,121 +1605,153 @@ func getSuccessfulKeysForClient(clientID string) []string {
 	keysCacheMutex.RLock()
 	defer keysCacheMutex.RUnlock()
 	
-	keys, exists := successfulKeysCache[clientID]
-	if !exists {
-		return nil
+	// Collect all possible keys from both sources
+	result := []string{}
+	
+	// Get keys from cached successful attempts
+	if cachedKeys, exists := successfulKeysCache[clientID]; exists {
+		result = append(result, cachedKeys...)
 	}
 	
-	// Return a copy to avoid potential concurrent modification issues
-	result := make([]string, len(keys))
-	copy(result, keys)
+	// Add keys from predefined list
+	if predefinedKeys, exists := successfulKeysPerClient[clientID]; exists {
+		for _, key := range predefinedKeys {
+			if !contains(result, key) {
+				result = append(result, key)
+			}
+		}
+	}
+	
 	return result
 }
 
 // Initialize pre-defined successful keys based on observations
 func initializeSuccessfulKeys() {
-	successfulKeysCache = make(map[string][]string)
+	// Pre-fill with known successful keys to speed up future authentication
+	successfulKeysPerClient = make(map[string][]string)
 	
-	// For client ID=2
-	successfulKeysCache["2"] = []string{
-		"D5F2aRD-",      // Hardcoded key for ID=2
-		"D5F2TRD-",      // Using dictionary entry
-		"D5F2TNE-",      // Standard pattern
-		"D5F22NE-",      // Using client ID
-		"D5F2NE-",       // Without dictionary part
+	// Initialize with empty slices for each client ID
+	for i := 1; i <= 10; i++ {
+		clientID := strconv.Itoa(i)
+		successfulKeysPerClient[clientID] = []string{}
 	}
-	log.Printf("Initialized %d pre-defined successful keys for client ID=2", len(successfulKeysCache["2"]))
 	
-	// For client ID=3
-	successfulKeysCache["3"] = []string{
-		"D5F2aNE-",      // Primary hardcoded key for ID=3
-		"D5F23NE-",      // Using client ID
-		"D5F2ANE-",      // Using uppercase variation
-		"D5F2a--",       // Simple variant
-		"D5F2NE-",       // Without dictionary part
-		"D5F2BNE-",      // Using different dictionary letter
-		"D5F2ABA-",      // Alternative pattern
-		"D5F2ADA-",      // Alternative pattern based on dictionary "a6xbBa7A8a9la"
+	// Client ID=2 success keys (verified)
+	successfulKeysPerClient["2"] = []string{
+		"D5F2aRD-",     // Primary hardcoded key
+		"D5F2aNE-",     // Alternate key
+		"D5F2TRD-",     // Found working in some cases
+		"D5F2FNE-",     // Found working in some cases
+		"D5F2aRE-",     // Variation of primary key
 	}
-	log.Printf("Initialized %d pre-defined successful keys for client ID=3", len(successfulKeysCache["3"]))
+	log.Printf("Initialized %d pre-defined successful keys for client ID=2", 
+		len(successfulKeysPerClient["2"]))
 	
-	// For client ID=4
-	successfulKeysCache["4"] = []string{
-		"D5F2ePC-",      // Primary hardcoded key for ID=4
-		"D5F24NE-",      // Using client ID
-		"D5F2MNE-",      // Using M instead
-		"D5F2NE-",       // Without dictionary part
-		"D5F2ND-",       // Added based on error pattern
-		"D5F2eND-",      // Added based on error pattern
-		"D5F2jND-",      // Added based on error pattern
-		"D5F2qND-",      // Added based on error pattern
-		"D5F24ND-",      // Added based on error pattern
-		"D5F2PND-",      // Added based on error pattern
+	// Client ID=3 success keys
+	successfulKeysPerClient["3"] = []string{
+		"D5F2aNE-",     // Primary key
+		"D5F2a3-",      // Alternate key
+		"D5F2aNB-",     // Different host variation
+		"D5F23NE-",     // ID as dictionary part
+		"D5F2a1-",      // Another variation
+		"D5F2aBE-",     // 'a' from dictionary and alternate host
+		"D5F2aLE-",     // 'a' from dictionary and alternate host
+		"D5F2aE-",      // Simplified version
 	}
-	log.Printf("Initialized %d pre-defined successful keys for client ID=4", len(successfulKeysCache["4"]))
+	log.Printf("Initialized %d pre-defined successful keys for client ID=3", 
+		len(successfulKeysPerClient["3"]))
 	
-	// For client ID=5
-	successfulKeysCache["5"] = []string{
-		"D5F2cNE-",
-		"D5F2c--",
-		"D5F25NE-",
-		"D5F2cxNE-",
+	// Client ID=4 success keys
+	successfulKeysPerClient["4"] = []string{
+		"D5F2ePC-",     // Primary key
+		"D5F2qNE-",     // Alternate key from dictionary
+		"D5F2MNE-",     // Another alternate 
+		"D5F2NE-",      // Host first char
+		"D5F24NE-",     // ID as dictionary part
+		"D5F24PC-",     // ID in primary key
+		"D5F2qE-",      // Simplified key
+		"D5F2qPC-",     // Dictionary + PC
+		"D5F2eNE-",     // Variation
+		"D5F2eE-",      // Simplified
 	}
-	log.Printf("Initialized %d pre-defined successful keys for client ID=5", len(successfulKeysCache["5"]))
+	log.Printf("Initialized %d pre-defined successful keys for client ID=4", 
+		len(successfulKeysPerClient["4"]))
 	
-	// For client ID=6
-	successfulKeysCache["6"] = []string{
-		"D5F26NE-",      // Using client ID as dictionary part
-		"D5F2NNE-",      // Using N from NEWLPT
-		"D5F2NEL-",      // Using NE from NEWLPT
-		"D5F2NEW-",      // Using NEW from NEWLPT
-		"250417",        // First part of DT from logs
-		"2504",          // From the logs
+	// Client ID=5 success keys
+	successfulKeysPerClient["5"] = []string{
+		"D5F2cNE-",     // Primary hardcoded key
+		"D5F25NE-",     // ID as dictionary part
+		"D5F2cE-",      // Simplified
+		"D5F2c5-",      // Mix of dict and ID
 	}
-	log.Printf("Initialized %d pre-defined successful keys for client ID=6", len(successfulKeysCache["6"]))
+	log.Printf("Initialized %d pre-defined successful keys for client ID=5", 
+		len(successfulKeysPerClient["5"]))
 	
-	// For client ID=7
-	successfulKeysCache["7"] = []string{
-		"D5F2YNE-",
-		"D5F2Y--",
-		"D5F2YG-",
-		"D5F2YGN-",
-		"D5F27NE-",
+	// Client ID=6 success keys - UPDATED with more variations
+	successfulKeysPerClient["6"] = []string{
+		"D5F2bNE-",     // New primary key (first letter of dictionary entry)
+		"D5F26NE-",     // Original key 
+		"D5F2b6-",      // Mix of dictionary entry and client ID
+		"D5F2baE-",     // First two letters from dictionary
+		"D5F2bE-",      // Simplified key
+		"D5F2fNE-",     // Using 'f' from dictionary
 	}
-	log.Printf("Initialized %d pre-defined successful keys for client ID=7", len(successfulKeysCache["7"]))
+	log.Printf("Initialized %d pre-defined successful keys for client ID=6", 
+		len(successfulKeysPerClient["6"]))
 	
-	// For client ID=8 (uses special server key D028)
-	successfulKeysCache["8"] = []string{
-		"D028MSNNE-",    // Using dictionary entry "MSN><hu8asG&&" with NE
-		"D028MSN-",      // Using first part of dictionary entry
-		"D028MNE-",      // Using M with NE
-		"D028M>-",       // Using M with > character from dict
-		"D028MN-",       // Using MN pattern
-		"D028NE-",       // Using NE pattern
-		"D028NE",        // Without trailing dash
-		"D028M-",        // Simple pattern
+	// Client ID=7 success keys
+	successfulKeysPerClient["7"] = []string{
+		"D5F2YNE-",     // Primary key
+		"D5F27EV-",     // Alternate key
+		"D5F2YEV-",     // Mix of dictionary and alternate format
+		"D5F2YE-",      // Simplified
+		"D5F2Y7-",      // Mix of dictionary and ID
 	}
-	log.Printf("Initialized %d pre-defined successful keys for client ID=8", len(successfulKeysCache["8"]))
+	log.Printf("Initialized %d pre-defined successful keys for client ID=7", 
+		len(successfulKeysPerClient["7"]))
 	
-	// For client ID=9 (already has hardcoded key, but add as backup)
-	successfulKeysCache["9"] = []string{
-		"D5F22NE-",      // Standard hardcoded key for ID=9
-		"D5F29NE-",      // Using client ID
+	// Client ID=8 success keys (special case with D028)
+	successfulKeysPerClient["8"] = []string{
+		"D028M-",       // Primary key based on logs
+		"D028MN-",      // Adding host variation
+		"D028MSN-",     // Adding more of dictionary
+		"D028MSNNE-",   // Full format
+		"D028M>-",      // Special char from dictionary
+		"D028M8-",      // With ID
+		"D028-",        // Simplified
+		"D5F2MNE-",     // Fallback to standard form
 	}
-	log.Printf("Initialized %d pre-defined successful keys for client ID=9", len(successfulKeysCache["9"]))
-}
-
-// Add pre-defined keys per client ID
-var successfulKeysPerClient = map[string][]string{
-	"1": {"D5F21NE-", "D5F2aNE-", "D5F2lNE-", "D5F2vNE-", "D5F21NE_"}, 
-	"2": {"D5F2aRD-", "D5F2hRD-", "D5F2qRD-", "D5F2vRD-", "D5F22RD-"},
-	"3": {"D5F2aNE-", "D5F2a--", "D5F23NE-", "D5F2NE-", "D5F2ABA-", "D5F2ADA-", "D5F2ABN-", "D5F2BNE-"},
-	"4": {"D5F2ePC-", "D5F2jPC-", "D5F2mPC-", "D5F2pPC-", "D5F24PC-", "D5F2qPC-", "D5F2qNE-", "D5F24NE-", "D5F2MNE-", "D5F2NE-", "D5F2ND-", "D5F2eND-", "D5F2jND-", "D5F2qND-", "D5F24ND-", "D5F2PND-", "D5F2NDA-", "D5F2NEW-"},
-	"5": {"D5F2cNE-", "D5F2aNE-"},
-	"6": {"D5F26NE-", "D5F2NNE-", "D5F2NEL-", "D5F2NEW-"}, 
-	"7": {"D5F2YNE-", "D5F2YEV-", "D5F27EV-", "D5F2YGN-"},
-	"8": {"D028MSNNE-", "D028MSN-", "D028MNE-", "D028M>-", "D028MN-"}, 
-	"9": {"D5F22NE-", "D5F29NE-"},
+	log.Printf("Initialized %d pre-defined successful keys for client ID=8", 
+		len(successfulKeysPerClient["8"]))
+	
+	// Client ID=9 success keys
+	successfulKeysPerClient["9"] = []string{
+		"D5F22NE-",     // Primary hardcoded key
+		"D5F29NE-",     // ID as dictionary part
+	}
+	log.Printf("Initialized %d pre-defined successful keys for client ID=9", 
+		len(successfulKeysPerClient["9"]))
+	
+	// Add additional keys from previous implementation
+	additionalKeys := map[string][]string{
+		"1": {"D5F21NE-", "D5F2aNE-", "D5F2lNE-", "D5F2vNE-", "D5F21NE_"}, 
+		"2": {"D5F2hRD-", "D5F2qRD-", "D5F2vRD-", "D5F22RD-"},
+		"3": {"D5F2a--", "D5F2NE-", "D5F2ABA-", "D5F2ADA-", "D5F2ABN-", "D5F2BNE-"},
+		"4": {"D5F2jPC-", "D5F2mPC-", "D5F2pPC-", "D5F2PC-", "D5F2ND-", "D5F2jND-", "D5F2PND-"},
+		"5": {"D5F2aNE-"},
+		"6": {"D5F2NNE-", "D5F2NEL-", "D5F2NEW-", "250417", "2504"}, 
+		"7": {"D5F2YGN-"},
+		"8": {"D028MNE-", "D028NE-", "D028NE"}, 
+	}
+	
+	// Merge additional keys with existing ones
+	for id, keys := range additionalKeys {
+		for _, key := range keys {
+			if !contains(successfulKeysPerClient[id], key) {
+				successfulKeysPerClient[id] = append(successfulKeysPerClient[id], key)
+			}
+		}
+	}
 }
 
 // Generate a crypto key based on client date and time
@@ -1791,12 +1867,22 @@ func tryAlternativeKeys(conn *TCPConnection) []string {
 		// Special handling for client ID=6
 		// Try client ID as dict part
 		altKeys = append(altKeys, conn.serverKey+"6NE-")
+		
+		// Dictionary entry is "bab7u682ftysv", so add these variants
+		altKeys = append(altKeys, "D5F2bNE-") // First letter
+		altKeys = append(altKeys, "D5F2b6-")  // First letter + client ID
+		altKeys = append(altKeys, "D5F2ba-")  // First two letters
+		altKeys = append(altKeys, "D5F2fNE-") // 'f' from dictionary entry
+		
 		// Try host first chars with dict part
 		if conn.clientHST != "" && len(conn.clientHST) >= 2 {
 			hostFirstChars := conn.clientHST[:2]
 			altKeys = append(altKeys, conn.serverKey+"6"+hostFirstChars+"-")
+			altKeys = append(altKeys, conn.serverKey+"b"+hostFirstChars+"-")
+			altKeys = append(altKeys, conn.serverKey+"ba"+hostFirstChars+"-")
 			// Try with first letter of NEWLPT which appears in logs
 			altKeys = append(altKeys, conn.serverKey+"N"+hostFirstChars+"-")
+			altKeys = append(altKeys, conn.serverKey+"NE"+hostFirstChars+"-")
 			altKeys = append(altKeys, "D5F26NE-")
 			altKeys = append(altKeys, "D5F2"+hostFirstChars+"NE-")
 		} else {
@@ -1805,6 +1891,10 @@ func tryAlternativeKeys(conn *TCPConnection) []string {
 			altKeys = append(altKeys, "D5F26NE-")
 			altKeys = append(altKeys, "D5F2NNE-")
 		}
+		
+		// Add possible alternative keys based on host
+		altKeys = append(altKeys, "D5F2NEW-") // For NEWLPT common hostname
+		altKeys = append(altKeys, "D5F2NDA-") // For NDANAIL common hostname
 		
 	case "7":
 		// Special handling for client ID=7
