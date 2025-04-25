@@ -114,8 +114,30 @@ class DataCompressor:
             decrypted_data = None
             if self.crypto_key:
                 try:
+                    # Special handling for client ID=2
+                    if self.client_id == 2:
+                        print(f"Special handling for client ID=2", file=sys.stderr)
+                        
+                        # For ID=2, handle the 152-byte data packets
+                        data_len = len(decoded_data)
+                        if data_len == 152:
+                            print(f"Detected 152-byte data packet for client ID=2", file=sys.stderr)
+                            
+                            # Add PKCS#7 padding to make it valid for AES (multiple of 16)
+                            # 152 + 8 = 160 bytes (divisible by 16)
+                            padding_size = 16 - (data_len % 16)  # Should be 8 for 152 bytes
+                            padded_data = decoded_data + bytes([padding_size]) * padding_size
+                            print(f"Added {padding_size} bytes of PKCS#7 padding", file=sys.stderr)
+                            decoded_data = padded_data
+                        elif data_len % 16 != 0:
+                            # Add PKCS#7 padding for any other non-16-multiple length
+                            padding_size = 16 - (data_len % 16)
+                            padded_data = decoded_data + bytes([padding_size]) * padding_size
+                            print(f"Added {padding_size} bytes of PKCS#7 padding for non-standard length", file=sys.stderr)
+                            decoded_data = padded_data
+                    
                     # Special handling for client ID=1
-                    if self.client_id == 1:
+                    elif self.client_id == 1:
                         # Rest of the code same as original...
                         # For simplicity, just use the decoded data
                         decrypted_data = decoded_data

@@ -301,6 +301,15 @@ class TCPConnection(RemoteConnection):
         if result:
             return True, result
         
+        # If we have client ID=2 and decryption failed, try alternative approaches
+        if client_id == 2:
+            print(f"[decrypt_data] Special handling for client ID=2 after initial failure", file=sys.stderr)
+            # Try using the hardcoded key again with explicit padding handling
+            compressor = DataCompressor(HARDCODED_KEYS[2], client_id)
+            result = compressor.decompress_data(source)
+            if result:
+                return True, result
+        
         # Original code doesn't have fallback keys, but let's add this for robustness
         # For client IDs with hardcoded keys, try with those
         try:
