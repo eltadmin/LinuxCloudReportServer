@@ -12,4 +12,13 @@ services:
       - ./config:/app/config
       - ./logs:/app/logs
       - ./updates:/app/updates
-    restart: unless-stopped 
+    restart: unless-stopped
+    # Ensure console logging is visible
+    tty: true
+    stdin_open: true
+    # Set logging options
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3" 

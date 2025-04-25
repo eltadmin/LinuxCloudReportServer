@@ -9,8 +9,25 @@ import traceback
 import zlib
 from typing import Optional, Tuple
 
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import pad, unpad
+# Fix import for pycryptodome package
+try:
+    from Crypto.Cipher import AES
+    from Crypto.Util.Padding import pad, unpad
+except ImportError:
+    print("Error importing Crypto module. Trying alternative import...", file=sys.stderr)
+    try:
+        # Alternative import for some systems
+        from Cryptodome.Cipher import AES
+        from Cryptodome.Util.Padding import pad, unpad
+        # Create alias for compatibility
+        import sys
+        import Cryptodome as Crypto
+        sys.modules['Crypto'] = Crypto
+        print("Successfully imported Cryptodome module as Crypto", file=sys.stderr)
+    except ImportError as e:
+        print(f"Failed to import crypto modules: {e}", file=sys.stderr)
+        print("Please install the required packages with: pip install pycryptodome", file=sys.stderr)
+        sys.exit(1)
 
 class DataCompressor:
     """
