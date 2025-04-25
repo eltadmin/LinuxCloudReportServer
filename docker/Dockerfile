@@ -6,17 +6,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Test crypto module import
-RUN python -c "try: \
-    import Crypto; \
-    print('Crypto module imported successfully'); \
-  except ImportError: \
-    try: \
-      import Cryptodome; \
-      print('Cryptodome module imported successfully'); \
-    except ImportError: \
-      print('Failed to import crypto modules'); \
-      exit(1)"
+# Copy crypto module checker script
+COPY docker/check_crypto.py /app/check_crypto.py
+RUN chmod +x /app/check_crypto.py && \
+    python /app/check_crypto.py
 
 # Copy application code
 COPY src/ /app/
