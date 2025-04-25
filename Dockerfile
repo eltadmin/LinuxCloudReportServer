@@ -1,45 +1,45 @@
-FROM golang:1.18-alpine AS builder
+FROM golang:1.20-alpine AS builder
 
-# Set the working directory
 WORKDIR /app
 
-# Install necessary dependencies
-RUN apk add --no-cache git gcc musl-dev
-
-# Copy go.mod and go.sum first to leverage Docker caching
-COPY go.mod go.sum ./
-RUN go mod download
-
-# Copy the rest of the source code
+# Copy source code
 COPY . .
 
+# Initialize Go module if go.mod doesn't exist
+RUN if [ ! -f go.mod ]; then \
+    go mod init github.com/eltrade/reportcom-server && \
+    go mod tidy \
+    ; fi
+
+# Download dependencies
+RUN go mod download
+
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o reportcom-server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o reportcom-server .
 
-# Use a small alpine image for the runtime
-FROM alpine:3.16
+# Create a minimal production image
+FROM alpine:3.17
 
-# Install necessary runtime dependencies
-RUN apk add --no-cache ca-certificates tzdata
-
-# Set the working directory
+# Set working directory
 WORKDIR /app
 
-# Copy the binary from the builder stage
+# Install CA certificates and timezone data
+RUN apk --no-cache add ca-certificates tzdata
+
+# Create required directories
+RUN mkdir -p /app/config /app/logs /app/updates
+
+# Copy the binary from builder stage
 COPY --from=builder /app/reportcom-server /app/
 
-# Create necessary directories
-RUN mkdir -p /app/logs /app/config /app/updates
+# Copy config.ini if it exists
+COPY config.ini* /app/config/
 
-# Copy config file
-COPY config.ini /app/config/
+# Set permissions
+RUN chmod +x /app/reportcom-server
 
-# Set environment variables
-ENV LOG_PATH=/app/logs
-
-# Expose the ports
+# Expose TCP and HTTP ports
 EXPOSE 9001 9002
 
-# Set the entry point
-ENTRYPOINT ["/app/reportcom-server"]
-CMD ["--config", "/app/config/config.ini", "--log", "/app/logs"] 
+# Run the server
+CMD ["/app/reportcom-server", "-config", "/app/config/config.ini"] 
