@@ -50,6 +50,7 @@ CRYPTO_DICTIONARY = [
 HARDCODED_KEYS = {
     1: 'D5F21NE-',   # Client ID=1
     2: 'D5F2aRD-',   # Client ID=2
+    4: 'D5F2qNE-',   # Client ID=4
     5: 'D5F2cNE-',   # Client ID=5
     6: 'D5F26NE-',   # Client ID=6
     9: 'D5F22NE-',   # Client ID=9
