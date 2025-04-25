@@ -264,13 +264,17 @@ class TcpServer:
             Response string
         """
         try:
+            print(f"Received command: {command}")
+            
             # Parse command and parameters
             parts = command.split()
             
             if not parts:
+                print("Empty command received")
                 return f"{TCP_ERR_COMMAND_UNKNOWN} Empty command"
             
             cmd = parts[0].upper()
+            print(f"Command type: {cmd}")
             
             # Parse parameters (format: key=value)
             params = {}
@@ -279,11 +283,14 @@ class TcpServer:
                     key, value = part.split("=", 1)
                     params[key] = value
             
+            print(f"Command parameters: {params}")
+            
             # Handle client identification
             connection = handler.connection
             
             # If client ID is set, add to connections list
             if connection.client_id and connection.client_id not in self.connections:
+                print(f"New client ID: {connection.client_id}")
                 with self.connections_lock:
                     # Check for duplicate client ID
                     if connection.client_id in self.connections:
@@ -294,14 +301,21 @@ class TcpServer:
                         connection.must_disconnect = True
                         
                         error_msg = f"Duplicate client ID: {connection.client_id}"
+                        print(f"ERROR: {error_msg}")
                         self.logger.log(error_msg)
                         return f"{TCP_ERR_DUPLICATE_CLIENT_ID} {error_msg}"
                     
                     # Add to connections list
                     self.connections[connection.client_id] = connection
+                    print(f"Added client ID {connection.client_id} to connections list")
+                    self.logger.log(f"New client connected with ID: {connection.client_id}")
             
             # Handle command
-            return handler.handle_command(command, params)
+            print(f"Executing command: {cmd}")
+            response = handler.handle_command(command, params)
+            print(f"Command response: {response[:100]}" + ("..." if len(response) > 100 else ""))
+            
+            return response
             
         except Exception as e:
             # Log error

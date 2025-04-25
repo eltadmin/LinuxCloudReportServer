@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Tuple, Any
 
 import requests
 import sys
+import traceback
 
 from constants import (
     DROP_DEVICE_WITHOUT_ACTIVITY_SEC,
@@ -467,19 +468,30 @@ class TCPCommandHandler:
     def handle_info(self, data: Dict[str, str]) -> str:
         """Handle INFO command"""
         try:
+            # Log incoming info request
+            print(f"Received INFO request with data param length: {len(data.get('DATA', ''))}")
+            
             # Check if DATA parameter exists
             if "DATA" not in data:
+                print("ERROR: Missing DATA parameter in INFO request")
                 return f"{TCP_ERR_INVALID_DATA_PACKET} Missing DATA parameter"
             
             # Decrypt data
+            print(f"Attempting to decrypt data with key: {self.connection.crypto_key}, client_id: {self.connection.client_id}")
             success, decrypted = self.connection.decrypt_data(data["DATA"])
             if not success:
+                print(f"ERROR: Failed to decrypt INFO data: {decrypted}")
                 return f"{TCP_ERR_FAIL_DECODE_DATA} Failed to decrypt data"
+            
+            print(f"Successfully decrypted INFO data: {decrypted}")
             
             # Initialize client ID
             success = self.connection.init_client_id(decrypted, self.auth_server_url)
             if not success:
+                print(f"ERROR: Failed to initialize client ID: {self.connection.last_error}")
                 return f"{TCP_ERR_FAIL_INIT_CLIENT_ID} {self.connection.last_error}"
+            
+            print(f"Successfully initialized client ID: {self.connection.client_id}")
             
             # Prepare response data
             now = datetime.datetime.now()
@@ -495,16 +507,22 @@ class TCPCommandHandler:
             response_data += f"CD={now.strftime('%Y-%m-%d')}\r\n"  # Creation date
             response_data += f"CT={now.strftime('%H:%M:%S')}\r\n"  # Creation time
             
+            print(f"Preparing to encrypt response: {response_data}")
+            
             # Encrypt response
             success, encrypted = self.connection.encrypt_data(response_data)
             if not success:
+                print(f"ERROR: Failed to encrypt INFO response: {self.connection.last_error}")
                 return f"{TCP_ERR_FAIL_ENCODE_DATA} Failed to encrypt response"
             
             # Format full response
             response = f"200 DATA={encrypted}"
+            print(f"INFO response length: {len(response)}")
             
             return response
         except Exception as e:
+            print(f"ERROR: Exception in handle_info: {e}")
+            print(traceback.format_exc(), file=sys.stderr)
             return f"{TCP_ERR_FAIL_DECODE_DATA} Error: {e}"
     
     def handle_ping(self) -> str:
