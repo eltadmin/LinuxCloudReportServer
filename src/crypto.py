@@ -352,7 +352,7 @@ def generate_client_crypto_key(client_id: int, server_key: str, host_name: str) 
         A crypto key string
     """
     # Check for hardcoded keys first
-    from constants import HARDCODED_KEYS, CRYPTO_DICTIONARY
+    from src.constants import HARDCODED_KEYS, CRYPTO_DICTIONARY
     
     try:
         if client_id in HARDCODED_KEYS:
