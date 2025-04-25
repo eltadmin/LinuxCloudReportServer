@@ -6,6 +6,12 @@ This script can be used to test encryption/decryption with different client IDs
 
 import sys
 import os
+
+# Add the src directory to the Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.join(current_dir, 'src')
+sys.path.append(src_dir)
+
 import base64
 import argparse
 from src.crypto import DataCompressor, generate_client_crypto_key, check_registration_key

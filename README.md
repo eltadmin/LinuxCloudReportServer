@@ -30,6 +30,22 @@ A Linux implementation of the CloudTcpServer for TCP/IP communication with clien
 docker-compose up -d
 ```
 
+#### Docker Environment Variables
+
+When using Docker, you can set the following environment variables in docker-compose.yml:
+
+- `SERVER_SERIAL` - Override the hardware serial number detection
+- `SERVER_KEY` - Use a specific registration key
+
+Example:
+```yaml
+environment:
+  - SERVER_SERIAL=my-server-id
+  - SERVER_KEY=your-base64-encoded-key
+```
+
+If these variables are not set, the entrypoint script will attempt to detect the hardware serial and generate a key automatically.
+
 ### Manual Installation
 
 1. Clone the repository or extract the source code
@@ -78,6 +94,16 @@ Then copy the registration info to your `server.ini` file:
 SERIAL NUMBER=your_serial_number
 KEY=your_generated_key
 ```
+
+For detailed instructions on registration key management, see [REGISTRATION_KEY_HOWTO.md](REGISTRATION_KEY_HOWTO.md).
+
+To test your registration key:
+
+```bash
+python test_custom_key.py
+```
+
+Note: The registration key is tied to the hardware serial number of the server. When moving the server to different hardware, you will need to generate a new key.
 
 ## Protocol Description
 

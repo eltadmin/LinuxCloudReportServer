@@ -12,8 +12,8 @@ services:
       - ./config:/app/config
       - ./logs:/app/logs
       - ./updates:/app/updates
-    # For debugging, don't restart automatically
-    restart: "no"
+    # Restart policy - will restart unless explicitly stopped
+    restart: "unless-stopped"
     # Ensure console logging is visible
     tty: true
     stdin_open: true
@@ -21,6 +21,9 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - CONFIG_FILE=/app/config/server.ini
+      # Server registration options (uncomment and set as needed)
+      #- SERVER_SERIAL=your-custom-serial  # Optional: Override hardware serial
+      #- SERVER_KEY=your-custom-key        # Optional: Use specific registration key
     # Set logging options
     logging:
       driver: "json-file"

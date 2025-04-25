@@ -288,10 +288,13 @@ class TCPConnection(RemoteConnection):
         # Get client ID as integer if possible
         try:
             client_id = int(self.client_id) if self.client_id else 0
+            print(f"[decrypt_data] Using client_id: {client_id}", file=sys.stderr)
         except ValueError:
             client_id = 0
+            print(f"[decrypt_data] Invalid client_id format, using 0", file=sys.stderr)
         
         # Try with primary key first
+        print(f"[decrypt_data] Creating DataCompressor with key '{self.crypto_key}' and client_id={client_id}", file=sys.stderr)
         compressor = DataCompressor(self.crypto_key, client_id)
         result = compressor.decompress_data(source)
         
