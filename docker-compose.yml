@@ -124,8 +124,8 @@ services:
     container_name: reportcom-server
     restart: unless-stopped
     ports:
-      - "9001:9001"  # TCP server port
-      - "9002:9002"  # HTTP server port
+      - "8016:8016"  # TCP server port
+      - "8015:8015"  # HTTP server port
     volumes:
       - ./config:/app/config
       - ./logs:/app/logs

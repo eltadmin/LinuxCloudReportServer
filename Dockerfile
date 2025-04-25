@@ -2,6 +2,9 @@ FROM golang:1.20-alpine AS builder
 
 WORKDIR /app
 
+# Install necessary packages including git
+RUN apk add --no-cache git
+
 # Copy source code
 COPY . .
 
@@ -39,7 +42,7 @@ COPY config.ini* /app/config/
 RUN chmod +x /app/reportcom-server
 
 # Expose TCP and HTTP ports
-EXPOSE 9001 9002
+EXPOSE 8016 8015
 
 # Run the server
 CMD ["/app/reportcom-server", "-config", "/app/config/config.ini"] 
