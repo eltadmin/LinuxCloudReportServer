@@ -504,144 +504,86 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	
 	// Special case for client ID=9
 	if conn.clientID == "9" {
-		// Try different combinations of keys for ID=9
-		// Use the hardcoded key for client ID=9 as the primary key
-		conn.cryptoKey = "D5F223-" // Промяна на основния ключ
-		// Generate multiple alternative keys
-		conn.altKeys = tryAlternativeKeys(conn) 
-		
-		// Add the keys in specific order - original hardcoded key first
-		conn.altKeys = append([]string{"D5F223-", "D5F22NE-", "D5F29NE-", "D5F2NE-", "D5F29N-", "D5F2NEL-", "D5F2NDA-"}, conn.altKeys...)
-		
-		log.Printf("Using special hardcoded keys for ID=9 (with %d alt keys)", 
-			len(conn.altKeys))
-		
-		// IMPORTANT: Return D5F2 as KEY and LEN=2 for client ID=9
-		// This matches the original server behavior that client expects
-		return fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", conn.serverKey, 2), nil
+		conn.keyLength = 2 // Use 2 characters from the dictionary entry
+		log.Printf("Using special key length for client ID=9: %d", conn.keyLength)
+	} else {
+		conn.keyLength = 1 // Default is 1 character
 	}
 	
 	// Special case for client ID=5
 	if conn.clientID == "5" {
-		// Use the hardcoded key for client ID=5
 		conn.cryptoKey = "D5F2cNE-"
-		conn.altKeys = tryAlternativeKeys(conn) // Generate alternative keys
-		log.Printf("Using special hardcoded key for ID=5: %s (with %d alt keys)", 
-			conn.cryptoKey, len(conn.altKeys))
-		
-		// Return D5F2 as KEY and LEN=1 for client ID=5
-		return fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", conn.serverKey, 1), nil
-	}
-	
-	// Special case for client ID=7
-	if conn.clientID == "7" {
-		// Use the hardcoded key for client ID=7 based on the dictionary entry "YGbsux&Ygsyxg"
-		conn.cryptoKey = "D5F2YNE-"
-		conn.altKeys = tryAlternativeKeys(conn) // Generate alternative keys
-		log.Printf("Using special hardcoded key for ID=7: %s (with %d alt keys)", 
-			conn.cryptoKey, len(conn.altKeys))
-		
-		// Return D5F2 as KEY and LEN=1 for client ID=7
-		return fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", conn.serverKey, 1), nil
-	}
-	
-	// Special case for client ID=6
-	if conn.clientID == "6" {
-		// Use the hardcoded key for client ID=6
-		conn.cryptoKey = "D5F2bNE-" // Changed from D5F26NE- to D5F2bNE-
-		conn.altKeys = tryAlternativeKeys(conn) // Generate alternative keys
-		
-		// Add more variations of keys as fallbacks
-		conn.altKeys = append([]string{
-			"D5F2bNE-", // First letter of dictionary entry "bab7u682ftysv"
-			"D5F26NE-", // Original key that wasn't working
-			"D5F2b6-",  // Mix of dictionary entry and client ID
-			"D5F2fNE-", // Try 'f' from dictionary entry
-			"D5F26PE-", // New variation
-			"D5F2baE-", // First two letters from dictionary
-		}, conn.altKeys...)
-		
-		log.Printf("Using special hardcoded key for ID=6: %s (with %d alt keys)", 
-			conn.cryptoKey, len(conn.altKeys))
-		
-		// IMPORTANT: Return D5F2 as KEY and LEN=1 for client ID=6
-		return fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", conn.serverKey, 1), nil
-	}
-
-	// Special case for client ID=2
-	if conn.clientID == "2" {
-		// Try a set of hardcoded keys for client ID=2
-		// We've seen issues with the existing key, so let's try more variations
-		conn.cryptoKey = "D5F2FRD-" // Try a different first key
-		
-		// Add additional fallback keys
-		conn.altKeys = []string{
-			"D5F2aRD-",   // Original hardcoded key 
-			"D5F2FT6-",   // Based on dictionary entry "FT676Ugug6sFa"
-			"D5F2FTR-",   // Simplified dictionary-based
-			"D5F2FR-",    // Shorter version
-			"D5F22RD-",   // ID-based key
-			"D5F2TRD-",   // Alternative from successful keys
+		log.Printf("Using hardcoded crypto key for client ID=5: %s", conn.cryptoKey)
+	} else if conn.clientID == "9" {
+		// Special case for client ID=9
+		conn.cryptoKey = "D5F22NE-"
+		log.Printf("Using hardcoded crypto key for client ID=9: %s", conn.cryptoKey)
+	} else if conn.clientID == "2" {
+		// Special case for client ID=2
+		conn.cryptoKey = "D5F2aRD-"
+		log.Printf("Using hardcoded crypto key for client ID=2: %s", conn.cryptoKey)
+	} else if conn.clientID == "6" {
+		// Special case for client ID=6
+		conn.cryptoKey = "D5F26NE-"
+		log.Printf("Using hardcoded crypto key for client ID=6: %s", conn.cryptoKey)
+	} else if conn.clientID == "8" {
+		// Special case for client ID=8, returning D028,LEN=4
+		conn.serverKey = "D028"
+		conn.keyLength = 4
+		conn.cryptoKey = "D028MSN><" // Using first 4 chars from dictionary entry 8
+		log.Printf("Using special server key for client ID=8: %s", conn.serverKey)
+		log.Printf("Using special key length for client ID=8: %d", conn.keyLength)
+		log.Printf("Generated crypto key for client ID=8: %s", conn.cryptoKey)
+	} else if conn.clientID == "1" && conn.clientHost == "LPT-RIVAN2-SOF" {
+		// Специален случай за клиент ID=1 с хост LPT-RIVAN2-SOF
+		conn.cryptoKey = "D5F21LPT-"
+		log.Printf("Using hardcoded crypto key for client ID=1 with host LPT-RIVAN2-SOF: %s", conn.cryptoKey)
+	} else {
+		// Normal key generation for other clients
+		keyPart := ""
+		if len(CRYPTO_DICTIONARY) >= clientIDInt && clientIDInt > 0 {
+			// Extract part from the dictionary based on key length
+			if int(conn.keyLength) <= len(CRYPTO_DICTIONARY[clientIDInt-1]) {
+				keyPart = CRYPTO_DICTIONARY[clientIDInt-1][0:conn.keyLength]
+				log.Printf("Using dictionary entry %d: %s (part: %s)", 
+					clientIDInt, CRYPTO_DICTIONARY[clientIDInt-1], keyPart)
+			} else {
+				log.Printf("Warning: key length %d exceeds dictionary entry length %d", 
+					conn.keyLength, len(CRYPTO_DICTIONARY[clientIDInt-1]))
+				// Use as much as we can
+				keyPart = CRYPTO_DICTIONARY[clientIDInt-1]
+			}
+		} else {
+			log.Printf("Warning: client ID %s is out of dictionary range (1-%d)", 
+				conn.clientID, len(CRYPTO_DICTIONARY))
+			// Use a default entry as fallback
+			if len(CRYPTO_DICTIONARY) > 0 {
+				keyPart = CRYPTO_DICTIONARY[0][0:min(int(conn.keyLength), len(CRYPTO_DICTIONARY[0]))]
+			}
 		}
 		
-		// Add other alternative keys
-		conn.altKeys = append(conn.altKeys, tryAlternativeKeys(conn)...)
+		// Generate the crypto key from server key + dictionary part + host parts
+		if len(conn.clientHost) >= 3 {
+			conn.cryptoKey = conn.serverKey + keyPart + 
+				string(conn.clientHost[0:min(2, len(conn.clientHost))]) + 
+				string(conn.clientHost[len(conn.clientHost)-1])
+		} else if len(conn.clientHost) > 0 {
+			// Not enough characters in host, use what we have
+			conn.cryptoKey = conn.serverKey + keyPart + conn.clientHost
+		} else {
+			// No host provided, use only server key and dictionary part
+			conn.cryptoKey = conn.serverKey + keyPart
+		}
 		
-		log.Printf("Using special hardcoded key for ID=2: %s (with %d alt keys)", 
-			conn.cryptoKey, len(conn.altKeys))
-		
-		// Return D5F2 as KEY and LEN=1 for client ID=2
-		return fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", conn.serverKey, 1), nil
-	}
-
-	// Special case for client ID=3
-	if conn.clientID == "3" {
-		// Use the hardcoded key for client ID=3
-		conn.cryptoKey = "D5F2aNE-"
-		conn.altKeys = tryAlternativeKeys(conn) // Generate alternative keys
-		log.Printf("Using special hardcoded key for ID=3: %s (with %d alt keys)", 
-			conn.cryptoKey, len(conn.altKeys))
-		
-		// Return D5F2 as KEY and LEN=1 for client ID=3
-		return fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", conn.serverKey, 1), nil
-	}
-
-	// Special case for client ID=4
-	if conn.clientID == "4" {
-		// Use the hardcoded key for client ID=4
-		conn.cryptoKey = "D5F2ePC-"
-		conn.altKeys = tryAlternativeKeys(conn) // Generate alternative keys
-		log.Printf("Using special hardcoded key for ID=4: %s (with %d alt keys)", 
-			conn.cryptoKey, len(conn.altKeys))
-		
-		// Return D5F2 as KEY and LEN=1 for client ID=4
-		return fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", conn.serverKey, 1), nil
-	}
-
-	// Generate a crypto key for this session
-	cryptoKeyLength := 1 // Default length is 1 for most clients 
-	if conn.clientID == "9" {
-		cryptoKeyLength = 2 // ID=9 uses length=2
+		log.Printf("Generated crypto key: %s for client %s", conn.cryptoKey, conn.clientID)
 	}
 	
-	if len(conn.clientDT) > 0 && len(conn.clientTM) > 0 {
-		// Generate key based on client date and time
-		clientDateTime := conn.clientDT + conn.clientTM
-		cryptoKey := generateCryptoKey(clientDateTime, cryptoKeyLength)
-		conn.cryptoKey = cryptoKey
-		log.Printf("Generated crypto key: %s for client %s", cryptoKey, conn.clientID)
-		
-		// Format response according to protocol: 200-KEY=xxxx\r\n200 LEN=y\r\n
-		return fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", conn.serverKey, cryptoKeyLength), nil
-	} else {
-		// Use default key if client didn't provide date/time
-		defaultKey := "ABCD"
-		conn.cryptoKey = defaultKey
-		log.Printf("Using default crypto key: %s for client %s", defaultKey, conn.clientID)
-		
-		// Format response according to protocol
-		return fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", conn.serverKey, cryptoKeyLength), nil
-	}
+	// Generate all possible alternative keys
+	conn.altKeys = tryAlternativeKeys(conn)
+	log.Printf("Using %d alt keys for client ID=%s", len(conn.altKeys), conn.clientID)
+	
+	// Format response according to protocol: 200-KEY=xxx\r\n200 LEN=y\r\n
+	return fmt.Sprintf("200-KEY=%s\r\n200 LEN=%d\r\n", conn.serverKey, conn.keyLength), nil
 }
 
 // Handle the ERROR command
@@ -1789,6 +1731,31 @@ func getSuccessfulKeysForClient(clientID string) []string {
 
 // Initialize pre-defined successful keys based on observations
 func initializeSuccessfulKeys() {
+	// Initialize map if needed
+	successfulKeysPerClient = make(map[string][]string)
+
+	// Predefined successful keys for client ID=1
+	id1Keys := []string{
+		"D5F21NE-",     // Основен ключ
+		"D5F21NE",      // Без дефис в края
+		"D5F21N-",      // По-кратък вариант
+		"D5F21-",       // Най-кратък вариант
+		"D5F21_",       // С подчертаване
+		"D5F2NEW-",     // За хост NEWLPT
+		"D5F2NDA-",     // За хост NDANAIL
+		"D5F21NDA-",    // Комбинация ID и хост
+		"D5F21NEW-",    // Комбинация ID и хост
+		"D5F2aNE-",     // Алтернативен ключ
+		"D5F2lNE-",     // Алтернативен ключ
+		"D5F2vNE-",     // Алтернативен ключ
+		"D5F2NE-",      // Само хост
+		"D5F21NEWLPT-", // Пълна комбинация
+		"D5F21RIVAN-",  // Специален ключ с хост RIVAN
+		"D5F21LPT-",    // Специален ключ с хост LPT
+	}
+	successfulKeysPerClient["1"] = id1Keys
+	log.Printf("Initialized %d pre-defined successful keys for client ID=1", len(id1Keys))
+
 	// Pre-fill with known successful keys to speed up future authentication
 	successfulKeysPerClient = make(map[string][]string)
 	
@@ -1931,26 +1898,6 @@ func initializeSuccessfulKeys() {
 			}
 		}
 	}
-	
-	// Client ID=1 success keys
-	successfulKeysPerClient["1"] = []string{
-		"D5F21NE-",     // Новый основной ключ
-		"D5F21NE",      // Без дефиса в конце
-		"D5F21N-",      // Более короткий вариант
-		"D5F21-",       // Самый короткий вариант
-		"D5F21_",       // С подчеркиванием
-		"D5F2NEW-",     // Для хоста NEWLPT
-		"D5F2NDA-",     // Для хоста NDANAIL
-		"D5F21NDA-",    // Комбинация ID и хоста
-		"D5F21NEW-",    // Комбинация ID и хоста
-		"D5F2aNE-",     // Альтернативный ключ
-		"D5F2lNE-",     // Альтернативный ключ
-		"D5F2vNE-",     // Альтернативный ключ
-		"D5F2NE-",      // Только хост
-		"D5F21NEWLPT-", // Полная комбинация
-	}
-	log.Printf("Initialized %d pre-defined successful keys for client ID=1", 
-		len(successfulKeysPerClient["1"]))
 }
 
 // Generate a crypto key based on client date and time
@@ -2376,10 +2323,15 @@ func handleReportRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	// Extract and validate request parameters
-	_ = r.URL.Query().Get("report") // reportName is not used, using _ to ignore
+	// Parse report name from URL path
+	pathParts := strings.Split(r.URL.Path, "/")
+	if len(pathParts) < 3 {
+		respondWithError(w, 205, "Unknown report")
+		return
+	}
+	_ = pathParts[2] // reportName is not used, using _ to ignore
 	
-	// Parse request body
+	// Read request body to get JSON content
 	var jsonContent map[string]interface{}
 	bodyBytes, err := ioutil.ReadAll(r.Body)
 	if err != nil {
@@ -2499,16 +2451,23 @@ func handleClientStatusRequest(w http.ResponseWriter, r *http.Request) {
 
 // handleObjectInfoRequest handles /objectinfo endpoint
 func handleObjectInfoRequest(w http.ResponseWriter, r *http.Request) {
-	// Extract parameters from the request
-	objectID := r.URL.Query().Get("objectid")
-	objectName := r.URL.Query().Get("objectname")
-	customerName := r.URL.Query().Get("customername")
-	eik := r.URL.Query().Get("eik")
-	address := r.URL.Query().Get("address")
-	hostname := r.URL.Query().Get("hostname")
-	_ = r.URL.Query().Get("comment") // comment is not used, using _ to ignore
+	// Check IP whitelist (as per documentation)
+	if !isIPWhitelisted(r.RemoteAddr) {
+		respondWithError(w, 4, "IP not whitelisted")
+		return
+	}
 	
-	// Validate required parameters
+	// Extract parameters
+	query := r.URL.Query()
+	objectID := query.Get("objectid")
+	objectName := query.Get("objectname")
+	customerName := query.Get("customername")
+	eik := query.Get("eik")
+	address := query.Get("address")
+	hostname := query.Get("hostname")
+	_ = query.Get("comment") // comment is not used, using _ to ignore
+	
+	// Check mandatory parameters
 	if objectID == "" || objectName == "" || customerName == "" || eik == "" || address == "" || hostname == "" {
 		respondWithError(w, 1, "Missing mandatory parameters")
 		return
@@ -2582,7 +2541,7 @@ func handleSubscriptionInfoRequest(w http.ResponseWriter, r *http.Request) {
 
 // handleSubscribeObjectRequest handles /subscribeobject endpoint
 func handleSubscribeObjectRequest(w http.ResponseWriter, r *http.Request) {
-	// Check IP whitelist
+	// Check IP whitelist (as per documentation)
 	if !isIPWhitelisted(r.RemoteAddr) {
 		respondWithError(w, 4, "IP not whitelisted")
 		return
@@ -2591,11 +2550,11 @@ func handleSubscribeObjectRequest(w http.ResponseWriter, r *http.Request) {
 	// Extract parameters
 	query := r.URL.Query()
 	objectID := query.Get("objectid")
-	_ = r.URL.Query().Get("expiredate") // expireDate is not used, using _ to ignore
-	_ = r.URL.Query().Get("active")     // active is not used, using _ to ignore
-	_ = r.URL.Query().Get("comment")    // comment is not used, using _ to ignore
+	_ = query.Get("expiredate") // expireDate is not used, using _ to ignore
+	_ = query.Get("active")     // active is not used, using _ to ignore
+	_ = query.Get("comment")    // comment is not used, using _ to ignore
 	
-	// Validate objectID
+	// Check mandatory parameters
 	if objectID == "" {
 		respondWithError(w, 1, "Missing objectid parameter")
 		return
@@ -2819,8 +2778,10 @@ func tryDecryptionWithVariant(data []byte, key string, description string, varia
 		}
 	}
 	
-	// For client ID=1, check for expected patterns
-	if strings.Contains(key, "D5F21") && len(decrypted) > 4 {
+	// For client ID=1, check for expected patterns, including LPT-RIVAN2-SOF hostname
+	if (strings.Contains(key, "D5F21") || 
+	    strings.Contains(key, "RIVAN") || // Добавена проверка за име на хост
+	    strings.Contains(key, "LPT-")) && len(decrypted) > 4 {
 		// Try direct check for Test string
 		if strings.Contains(string(decrypted), "TT=Test") {
 			log.Printf("Found 'TT=Test' in decrypted data from ID=1")
