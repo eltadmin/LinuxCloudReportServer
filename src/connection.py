@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Tuple, Any
 import requests
 import sys
 
-from constants import (
+from src.constants import (
     DROP_DEVICE_WITHOUT_ACTIVITY_SEC,
     HARDCODED_KEYS,
     ID8_KEY,
@@ -22,9 +22,13 @@ from constants import (
     RESPONSE_OK,
     TCP_ERR_FAIL_DECODE_DATA,
     TCP_ERR_FAIL_ENCODE_DATA,
+    TCP_ERR_INVALID_CRYPTO_KEY,
+    TCP_ERR_INVALID_DATA_PACKET,
+    TCP_ERR_FAIL_INIT_CLIENT_ID,
+    TCP_ERR_CHECK_UPDATE_ERROR,
 )
-from crypto import DataCompressor, generate_client_crypto_key
-from logger import Logger
+from src.crypto import DataCompressor, generate_client_crypto_key
+from src.logger import Logger
 
 class ConnectionInfo:
     """Connection information class"""
@@ -150,31 +154,41 @@ class TCPConnection(RemoteConnection):
         try:
             # Get client ID
             client_id = int(data.get("ID", "0"))
+            print(f"Initializing crypto key for client ID: {client_id}")
+            
             if client_id < 1 or client_id > 10:
                 self.last_error = f"Invalid client ID: {client_id}"
+                print(f"Invalid client ID: {client_id} (must be between 1-10)")
                 return False, 0
                 
             # Get hostname
             self.client_host = data.get("HST", "")
+            print(f"Client hostname: {self.client_host}")
+            
             if not self.client_host:
                 self.last_error = "Hostname is empty"
+                print("Error: Client hostname is empty")
                 return False, 0
             
             # Special handling for ID=8
             if client_id == 8:
                 self.server_key = ID8_KEY
+                print(f"Using special key for ID=8: KEY={ID8_KEY}, LEN={ID8_LEN}")
                 return True, ID8_LEN
             
             # Generate crypto key
             self.crypto_key = generate_client_crypto_key(client_id, self.server_key, self.client_host)
+            print(f"Generated crypto key: {self.crypto_key}")
             
             # Determine key length
             key_len = 2 if client_id == 9 else 1
+            print(f"Using key length: {key_len}")
             
             return True, key_len
             
         except Exception as e:
             self.last_error = f"Failed to initialize crypto key: {e}"
+            print(f"Exception in init_crypto_key: {e}")
             return False, 0
     
     def init_client_id(self, data: str, rest_url: str) -> bool:
@@ -434,6 +448,9 @@ class TCPCommandHandler:
     def handle_init(self, data: Dict[str, str]) -> str:
         """Handle INIT command"""
         try:
+            # Log incoming init request
+            print(f"Received INIT request with data: {data}")
+            
             # Set time difference
             if "DT" in data and "TM" in data:
                 self.connection.set_time_diff(data["DT"], data["TM"])
@@ -441,13 +458,16 @@ class TCPCommandHandler:
             # Initialize crypto key
             success, key_len = self.connection.init_crypto_key(data)
             if not success:
+                print(f"Failed to initialize crypto key: {self.connection.last_error}")
                 return f"{TCP_ERR_INVALID_CRYPTO_KEY} {self.connection.last_error}"
             
             # Format response
             response = f"200-KEY={self.connection.server_key}{LINE_SEPARATOR}200 LEN={key_len}"
+            print(f"INIT response: {response}")
             
             return response
         except Exception as e:
+            print(f"Exception in handle_init: {e}")
             return f"{TCP_ERR_INVALID_CRYPTO_KEY} Error: {e}"
     
     def handle_info(self, data: Dict[str, str]) -> str:
