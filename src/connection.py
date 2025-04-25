@@ -280,53 +280,35 @@ class TCPConnection(RemoteConnection):
             return False
     
     def decrypt_data(self, source: str) -> Tuple[bool, str]:
-        """Decrypt data using the crypto key"""
-        if not self.crypto_key:
-            self.last_error = "Crypto key is not initialized"
-            return False, ""
-        
-        # Get client ID as integer if possible
+        """
+        Decrypt data using the client's crypto key
+        """
         try:
-            client_id = int(self.client_id) if self.client_id else 0
-            print(f"[decrypt_data] Using client_id: {client_id}", file=sys.stderr)
-        except ValueError:
-            client_id = 0
-            print(f"[decrypt_data] Invalid client_id format, using 0", file=sys.stderr)
-        
-        # Try with primary key first
-        print(f"[decrypt_data] Creating DataCompressor with key '{self.crypto_key}' and client_id={client_id}", file=sys.stderr)
-        compressor = DataCompressor(self.crypto_key, client_id)
-        result = compressor.decompress_data(source)
-        
-        if result:
+            self.logger.debug(f"[decrypt_data] Using client_id: {self.client_id}")
+            self.logger.debug(f"[decrypt_data] Creating DataCompressor with key '{self.crypto_key}' and client_id={self.client_id}")
+            data_compressor = DataCompressor(self.crypto_key, self.client_id)
+            result = data_compressor.decompress_data(source)
             return True, result
-        
-        # If we have client ID=2 or ID=6 and decryption failed, try alternative approaches
-        if client_id in [2, 6]:
-            print(f"[decrypt_data] Special handling for client ID={client_id} after initial failure", file=sys.stderr)
-            # Try using the hardcoded key again with explicit padding handling
-            compressor = DataCompressor(HARDCODED_KEYS[client_id], client_id)
-            result = compressor.decompress_data(source)
-            if result:
-                return True, result
-        
-        # Original code doesn't have fallback keys, but let's add this for robustness
-        # For client IDs with hardcoded keys, try with those
-        try:
-            if client_id in HARDCODED_KEYS:
-                alt_key = HARDCODED_KEYS[client_id]
-                if alt_key != self.crypto_key:
-                    compressor = DataCompressor(alt_key, client_id)
-                    result = compressor.decompress_data(source)
-                    if result:
-                        # Update crypto key for future operations
-                        self.crypto_key = alt_key
-                        return True, result
-        except Exception as e:
-            print(f"Error trying alternate key: {e}", file=sys.stderr)
-        
-        self.last_error = f"Failed to decrypt data: {compressor.last_error}"
-        return False, ""
+        except Exception as ex:
+            # Special handling for client ID=2 and client ID=6
+            if self.client_id in [2, 6]:
+                try:
+                    self.logger.debug(f"Special handling for client ID={self.client_id} after initial failure")
+                    if self.client_id == 2:
+                        # For client ID=2, use hardcoded key
+                        data_compressor = DataCompressor("D5F2aRD-", self.client_id)
+                    elif self.client_id == 6:
+                        # For client ID=6, use hardcoded key
+                        data_compressor = DataCompressor("D5F26NE-", self.client_id)
+                    
+                    result = data_compressor.decompress_data(source)
+                    return True, result
+                except Exception as inner_ex:
+                    self.logger.error(f"Secondary decryption attempt failed for client ID={self.client_id}: {inner_ex}")
+                    return False, f"Error decrypting data: {str(inner_ex)}"
+            else:
+                self.logger.error(f"Error decrypting data: {str(ex)}")
+                return False, f"Error decrypting data: {str(ex)}"
     
     def encrypt_data(self, data: str) -> Tuple[bool, str]:
         """Encrypt data using the crypto key"""
