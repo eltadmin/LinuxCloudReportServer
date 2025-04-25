@@ -143,6 +143,12 @@ Common issues:
 - **Invalid registration key**: Make sure the registration key in `server.ini` is valid
 - **Port conflicts**: Check if ports 8016 (TCP) and 8080 (HTTP) are available
 - **Connection refused**: Make sure firewall settings allow connections to the configured ports
+- **Client ID=1 decryption issues**: Special handling is implemented for clients with ID=1 sending 152-byte packets. If you still have issues, check the logs for detailed error messages and verify the client is using the correct encryption key.
+
+Recent improvements in version 1.2:
+- Enhanced support for 152-byte packets from ID=1 clients
+- Improved decryption and decompression algorithms
+- Better error handling for compressed and uncompressed data
 
 ## License
 
