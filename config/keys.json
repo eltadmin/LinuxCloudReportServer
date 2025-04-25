@@ -1,0 +1,14 @@
+{
+  "server_keys": {
+    "default": "D5F2",
+    "special": {
+      "8": "D028"
+    }
+  },
+  "client_keys": {
+    "2": "D5F2aRD-",
+    "5": "D5F2cNE-",
+    "6": "D5F26NE-",
+    "9": "D5F22NE-"
+  }
+} 
