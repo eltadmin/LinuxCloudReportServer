@@ -11,6 +11,7 @@ import time
 from typing import Dict, List, Optional, Tuple, Any
 
 import requests
+import sys
 
 from constants import (
     DROP_DEVICE_WITHOUT_ACTIVITY_SEC,
@@ -270,8 +271,14 @@ class TCPConnection(RemoteConnection):
             self.last_error = "Crypto key is not initialized"
             return False, ""
         
+        # Get client ID as integer if possible
+        try:
+            client_id = int(self.client_id) if self.client_id else 0
+        except ValueError:
+            client_id = 0
+        
         # Try with primary key first
-        compressor = DataCompressor(self.crypto_key)
+        compressor = DataCompressor(self.crypto_key, client_id)
         result = compressor.decompress_data(source)
         
         if result:
@@ -280,18 +287,17 @@ class TCPConnection(RemoteConnection):
         # Original code doesn't have fallback keys, but let's add this for robustness
         # For client IDs with hardcoded keys, try with those
         try:
-            client_id = int(self.client_id)
             if client_id in HARDCODED_KEYS:
                 alt_key = HARDCODED_KEYS[client_id]
                 if alt_key != self.crypto_key:
-                    compressor = DataCompressor(alt_key)
+                    compressor = DataCompressor(alt_key, client_id)
                     result = compressor.decompress_data(source)
                     if result:
                         # Update crypto key for future operations
                         self.crypto_key = alt_key
                         return True, result
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Error trying alternate key: {e}", file=sys.stderr)
         
         self.last_error = f"Failed to decrypt data: {compressor.last_error}"
         return False, ""
@@ -302,7 +308,13 @@ class TCPConnection(RemoteConnection):
             self.last_error = "Crypto key is not initialized"
             return False, ""
         
-        compressor = DataCompressor(self.crypto_key)
+        # Get client ID as integer if possible
+        try:
+            client_id = int(self.client_id) if self.client_id else 0
+        except ValueError:
+            client_id = 0
+            
+        compressor = DataCompressor(self.crypto_key, client_id)
         result = compressor.compress_data(data)
         
         if result:

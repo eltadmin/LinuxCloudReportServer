@@ -35,14 +35,16 @@ class DataCompressor:
     This is a Python implementation of the Delphi TDataCompressor class
     """
     
-    def __init__(self, crypto_key: str = ''):
+    def __init__(self, crypto_key: str = '', client_id: int = 0):
         """
         Initialize the data compressor with an optional crypto key
         
         Args:
             crypto_key: The crypto key to use for encryption/decryption
+            client_id: The ID of the client (used for special handling)
         """
         self.crypto_key = crypto_key
+        self.client_id = client_id
         self.last_error = ''
         
         # If crypto key is too short, pad it (as in original Delphi code)
@@ -128,15 +130,29 @@ class DataCompressor:
             # Decrypt the data if we have a crypto key
             if self.crypto_key:
                 try:
-                    # Check if data length is multiple of 16 (AES block size)
-                    if len(decoded_data) % 16 != 0:
-                        print(f"Invalid data length for AES decryption: {len(decoded_data)}", file=sys.stderr)
-                        print(f"Adding PKCS#7 padding to make length a multiple of 16", file=sys.stderr)
+                    # Special handling for client ID=9
+                    # Based on analysis of the logs, client ID=9 has issues with padding
+                    if self.client_id == 9:
+                        print(f"Special handling for client ID=9", file=sys.stderr)
                         
-                        # Add PKCS#7 padding to make it valid
-                        padding_size = 16 - (len(decoded_data) % 16)
-                        decoded_data += bytes([padding_size]) * padding_size
-                        print(f"New length after padding: {len(decoded_data)}", file=sys.stderr)
+                        # For ID=9, trim any padding bytes from the end of the data
+                        # This is a compatibility fix for the Delphi implementation
+                        data_len = len(decoded_data)
+                        if data_len % 16 != 0:
+                            # Trim data to nearest multiple of 16 bytes
+                            new_len = (data_len // 16) * 16
+                            decoded_data = decoded_data[:new_len]
+                            print(f"Trimmed data from {data_len} to {new_len} bytes", file=sys.stderr)
+                    else:
+                        # Check if data length is multiple of 16 (AES block size)
+                        if len(decoded_data) % 16 != 0:
+                            print(f"Invalid data length for AES decryption: {len(decoded_data)}", file=sys.stderr)
+                            print(f"Adding PKCS#7 padding to make length a multiple of 16", file=sys.stderr)
+                            
+                            # Add PKCS#7 padding to make it valid
+                            padding_size = 16 - (len(decoded_data) % 16)
+                            decoded_data += bytes([padding_size]) * padding_size
+                            print(f"New length after padding: {len(decoded_data)}", file=sys.stderr)
                     
                     # Use MD5 hash of the key as AES key
                     key = hashlib.md5(self.crypto_key.encode('utf-8')).digest()
@@ -148,15 +164,39 @@ class DataCompressor:
                     # Decrypt the data
                     try:
                         decrypted_data = cipher.decrypt(decoded_data)
-                        # Try to unpad - if it fails, we'll catch the exception
-                        try:
-                            decrypted_data = unpad(decrypted_data, AES.block_size)
-                        except Exception as e:
-                            print(f"Error unpadding data: {e}", file=sys.stderr)
-                            print("Using raw decrypted data", file=sys.stderr)
-                            # For backward compatibility, try to continue with the raw decrypted data
-                            # This handles cases where the original data wasn't properly padded
-                            pass
+                        
+                        # For client ID=9, don't try to unpad
+                        if self.client_id == 9:
+                            # For ID=9, we assume no padding was used originally
+                            # Try to find the end of the actual data by looking for zlib header
+                            # The zlib header usually starts with 0x78 (120 in decimal)
+                            for i in range(len(decrypted_data)):
+                                if decrypted_data[i] == 120:  # 0x78 in decimal
+                                    # Found potential zlib header, try to decompress from this position
+                                    try:
+                                        test_data = zlib.decompress(decrypted_data[i:])
+                                        print(f"Found valid zlib header at position {i}", file=sys.stderr)
+                                        decrypted_data = decrypted_data[i:]
+                                        break
+                                    except Exception:
+                                        continue
+                        else:
+                            # Try to unpad - if it fails, we'll catch the exception
+                            try:
+                                decrypted_data = unpad(decrypted_data, AES.block_size)
+                            except Exception as e:
+                                print(f"Error unpadding data: {e}", file=sys.stderr)
+                                print("Using raw decrypted data", file=sys.stderr)
+                                
+                                # For backward compatibility, try to find the end of padding
+                                # Check last bytes to see if they look like padding
+                                last_byte = decrypted_data[-1]
+                                if 1 <= last_byte <= 16:
+                                    # If all last N bytes are the same value N, it's likely PKCS#7 padding
+                                    if all(b == last_byte for b in decrypted_data[-last_byte:]):
+                                        decrypted_data = decrypted_data[:-last_byte]
+                                        print(f"Manually removed {last_byte} padding bytes", file=sys.stderr)
+                        
                     except Exception as e:
                         self.last_error = f'[decompress_data] Decrypt error: {str(e)}'
                         print(f"Decrypt error: {e}", file=sys.stderr)
@@ -186,18 +226,32 @@ class DataCompressor:
                             # Try with window bits = 31 (gzip)
                             decompressed_data = zlib.decompress(decrypted_data, 31)
                         except Exception as third_error:
-                            # Try ignoring the last byte (sometimes padding causes issues)
-                            try:
-                                decompressed_data = zlib.decompress(decrypted_data[:-1])
-                            except Exception as fourth_error:
-                                # Log all attempts
-                                self.last_error = (
-                                    f'Decompress errors: Standard: {first_error}, '
-                                    f'Raw: {second_error}, Gzip: {third_error}, '
-                                    f'Truncated: {fourth_error}'
-                                )
-                                print(self.last_error, file=sys.stderr)
-                                return ''
+                            # For client ID=9, try additional trimming approaches
+                            if self.client_id == 9:
+                                # Try trimming data byte by byte from the end to find valid zlib data
+                                for i in range(1, min(32, len(decrypted_data))):
+                                    try:
+                                        decompressed_data = zlib.decompress(decrypted_data[:-i])
+                                        print(f"Successfully decompressed after trimming {i} bytes from end", file=sys.stderr)
+                                        break
+                                    except Exception:
+                                        continue
+                                else:  # This else belongs to the for loop - it runs if no break occurred
+                                    # If we get here, none of the trimming approaches worked
+                                    raise Exception("Failed to find valid zlib data after trimming")
+                            else:
+                                # Try ignoring the last byte (sometimes padding causes issues)
+                                try:
+                                    decompressed_data = zlib.decompress(decrypted_data[:-1])
+                                except Exception as fourth_error:
+                                    # Log all attempts
+                                    self.last_error = (
+                                        f'Decompress errors: Standard: {first_error}, '
+                                        f'Raw: {second_error}, Gzip: {third_error}, '
+                                        f'Truncated: {fourth_error}'
+                                    )
+                                    print(self.last_error, file=sys.stderr)
+                                    return ''
                 
                 # Convert bytes to string
                 try:
