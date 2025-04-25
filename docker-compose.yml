@@ -116,6 +116,29 @@ services:
       timeout: 5s
       retries: 5
 
+  reportcom-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: reportcom-server:latest
+    container_name: reportcom-server
+    restart: unless-stopped
+    ports:
+      - "9001:9001"  # TCP server port
+      - "9002:9002"  # HTTP server port
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./updates:/app/updates
+    environment:
+      - TZ=Europe/Sofia
+    networks:
+      - reportcom-network
+
 volumes:
   mysql_data:
-  php_vendor: 
+  php_vendor:
+
+networks:
+  reportcom-network:
+    driver: bridge 
