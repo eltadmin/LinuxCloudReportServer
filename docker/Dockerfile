@@ -7,10 +7,16 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Test crypto module import
-RUN python -c "try: import Crypto; print('Crypto module imported successfully'); \
+RUN python -c "try: \
+    import Crypto; \
+    print('Crypto module imported successfully'); \
+  except ImportError: \
+    try: \
+      import Cryptodome; \
+      print('Cryptodome module imported successfully'); \
     except ImportError: \
-        try: import Cryptodome; print('Cryptodome module imported successfully'); \
-        except ImportError: print('Failed to import crypto modules'); exit(1)"
+      print('Failed to import crypto modules'); \
+      exit(1)"
 
 # Copy application code
 COPY src/ /app/
