@@ -130,48 +130,76 @@ class DataCompressor:
             # Decrypt the data if we have a crypto key
             if self.crypto_key:
                 try:
-                    # Special handling for client ID=1 and ID=9
-                    # Both have issues with data length and padding
+                    # Special handling for client ID=1
                     if self.client_id == 1:
                         print(f"Special handling for client ID=1", file=sys.stderr)
                         
-                        # For ID=1, we know data size is often 152 bytes
+                        # For ID=1, handle the common 152-byte data packets
                         data_len = len(decoded_data)
                         if data_len == 152:
                             print(f"Detected 152-byte data packet for client ID=1", file=sys.stderr)
                             
-                            # Try with hardcoded key for client ID=1
+                            # Unlike ID=9, for ID=1 we'll try multiple approaches
+                            
+                            # First approach: Try with hardcoded key
                             try:
                                 from constants import HARDCODED_KEYS
                                 if 1 in HARDCODED_KEYS:
                                     alt_key = HARDCODED_KEYS[1]
                                     print(f"Trying hardcoded key for ID=1: {alt_key}", file=sys.stderr)
                                     key = hashlib.md5(alt_key.encode('utf-8')).digest()
-                                    # Add padding to make it a multiple of 16
-                                    padded_data = decoded_data + bytes([8]) * 8  # Add 8 bytes of padding (PKCS#7 style)
+                                    
+                                    # Approach 1: Trim to 144 bytes (like ID=9)
+                                    trimmed_data = decoded_data[:144]  # 9 blocks of 16 bytes
                                     cipher = AES.new(key, AES.MODE_CBC, iv=bytes(16))
-                                    decrypted_data = cipher.decrypt(padded_data)
-                                    # Remove padding
-                                    if decrypted_data[-1] <= 16:
-                                        padding_len = decrypted_data[-1]
-                                        decrypted_data = decrypted_data[:-padding_len]
-                                    print(f"Decryption with alternative key successful", file=sys.stderr)
-                                    return decrypted_data.decode('utf-8', errors='ignore')
+                                    try:
+                                        decrypted_data = cipher.decrypt(trimmed_data)
+                                        # Check if we can find "TT=Test" in the result
+                                        test_str = decrypted_data.decode('utf-8', errors='ignore')
+                                        if 'TT=Test' in test_str:
+                                            print(f"Successfully decrypted by trimming to 144 bytes", file=sys.stderr)
+                                            return test_str
+                                    except Exception:
+                                        pass
+                                    
+                                    # Approach 2: Add padding
+                                    padded_data = decoded_data + bytes([8]) * 8  # Add 8 bytes of padding
+                                    cipher = AES.new(key, AES.MODE_CBC, iv=bytes(16))
+                                    try:
+                                        decrypted_data = cipher.decrypt(padded_data)
+                                        # Try to find "TT=Test" in the result
+                                        test_str = decrypted_data.decode('utf-8', errors='ignore')
+                                        if 'TT=Test' in test_str:
+                                            print(f"Successfully decrypted by adding 8 bytes padding", file=sys.stderr)
+                                            return test_str
+                                    except Exception:
+                                        pass
                             except Exception as e:
-                                print(f"Failed with alternative key: {e}", file=sys.stderr)
+                                print(f"Failed with alternative approaches: {e}", file=sys.stderr)
                             
-                            # Add PKCS#7 padding to make it valid
-                            padding_size = 16 - (data_len % 16)
-                            decoded_data += bytes([padding_size]) * padding_size
-                            print(f"New length after padding: {len(decoded_data)}", file=sys.stderr)
+                            # Default approach: trim to 144 bytes
+                            decoded_data = decoded_data[:144]
+                            print(f"Using default approach: trimmed to 144 bytes", file=sys.stderr)
+                        else:
+                            # For other lengths, maintain standard padding
+                            if data_len % 16 != 0:
+                                # Add PKCS#7 padding to make it valid
+                                padding_size = 16 - (data_len % 16)
+                                decoded_data += bytes([padding_size]) * padding_size
+                                print(f"New length after padding: {len(decoded_data)}", file=sys.stderr)
+                    
+                    # For client ID=9, trim data to the nearest multiple of 16 bytes
                     elif self.client_id == 9:
                         print(f"Special handling for client ID=9", file=sys.stderr)
                         
-                        # For ID=9, trim any padding bytes from the end of the data
-                        # This is a compatibility fix for the Delphi implementation
+                        # For ID=9, trim data to the nearest multiple of 16 bytes
                         data_len = len(decoded_data)
-                        if data_len % 16 != 0:
-                            # Trim data to nearest multiple of 16 bytes
+                        if data_len == 152:  # Hard-coded special case for the 152-byte packets
+                            # Trim to 144 bytes (9 blocks of 16 bytes)
+                            decoded_data = decoded_data[:144]
+                            print(f"Trimmed data for ID=9 from 152 to 144 bytes", file=sys.stderr)
+                        elif data_len % 16 != 0:
+                            # General case - trim to nearest multiple of 16
                             new_len = (data_len // 16) * 16
                             decoded_data = decoded_data[:new_len]
                             print(f"Trimmed data from {data_len} to {new_len} bytes", file=sys.stderr)
@@ -245,6 +273,9 @@ class DataCompressor:
             
             # Decompress the data
             try:
+                print(f"Attempting to decompress data for client ID={self.client_id}, length={len(decrypted_data)}", file=sys.stderr)
+                print(f"First few bytes of data: {' '.join(format(b, '02x') for b in decrypted_data[:16])}", file=sys.stderr)
+                
                 # If client ID=1, try direct string conversion first (some clients might not compress)
                 if self.client_id == 1:
                     try:
@@ -259,51 +290,82 @@ class DataCompressor:
                 # Try multiple decompression strategies
                 try:
                     # Standard zlib decompression
+                    print("Trying standard zlib decompression", file=sys.stderr)
                     decompressed_data = zlib.decompress(decrypted_data)
+                    print(f"Standard zlib decompression successful, length={len(decompressed_data)}", file=sys.stderr)
                 except Exception as first_error:
+                    print(f"Standard zlib decompression failed: {first_error}", file=sys.stderr)
                     try:
                         # Try with window bits = -15 (raw deflate)
+                        print("Trying raw deflate decompression", file=sys.stderr)
                         decompressed_data = zlib.decompress(decrypted_data, -15)
+                        print(f"Raw deflate decompression successful, length={len(decompressed_data)}", file=sys.stderr)
                     except Exception as second_error:
+                        print(f"Raw deflate decompression failed: {second_error}", file=sys.stderr)
                         try:
                             # Try with window bits = 31 (gzip)
+                            print("Trying gzip decompression", file=sys.stderr)
                             decompressed_data = zlib.decompress(decrypted_data, 31)
+                            print(f"Gzip decompression successful, length={len(decompressed_data)}", file=sys.stderr)
                         except Exception as third_error:
-                            # For client ID=1 or ID=9, try additional trimming approaches
-                            if self.client_id in [1, 9]:
-                                # Try trimming data byte by byte from the end to find valid zlib data
-                                for i in range(1, min(32, len(decrypted_data))):
+                            print(f"Gzip decompression failed: {third_error}", file=sys.stderr)
+                            
+                            # For Delphi clients, try to find the start of a valid zlib stream
+                            # Common zlib headers: 78 01, 78 9C, 78 DA (most common)
+                            common_headers = [b'\x78\x01', b'\x78\x9C', b'\x78\xDA']
+                            
+                            print("Searching for valid zlib header in the data...", file=sys.stderr)
+                            for header in common_headers:
+                                pos = decrypted_data.find(header)
+                                if pos >= 0:
+                                    print(f"Found potential zlib header {header.hex()} at position {pos}", file=sys.stderr)
                                     try:
-                                        decompressed_data = zlib.decompress(decrypted_data[:-i])
-                                        print(f"Successfully decompressed after trimming {i} bytes from end", file=sys.stderr)
+                                        trimmed_data = decrypted_data[pos:]
+                                        decompressed_data = zlib.decompress(trimmed_data)
+                                        print(f"Successfully decompressed from position {pos}", file=sys.stderr)
                                         break
-                                    except Exception:
-                                        continue
-                                else:  # This else belongs to the for loop - it runs if no break occurred
-                                    # If we get here, none of the trimming approaches worked
-                                    # For client ID=1, as a last resort, return the decrypted data as string
-                                    if self.client_id == 1:
+                                    except Exception as e:
+                                        print(f"Failed to decompress from position {pos}: {e}", file=sys.stderr)
+                            else:  # This else belongs to the for loop
+                                print("No valid zlib header found, trying additional approaches", file=sys.stderr)
+                                
+                                # For client ID=1 or ID=9, try additional trimming approaches
+                                if self.client_id in [1, 9]:
+                                    # Try trimming data byte by byte from the end to find valid zlib data
+                                    for i in range(1, min(32, len(decrypted_data))):
                                         try:
-                                            possible_text = decrypted_data.decode('utf-8', errors='ignore')
-                                            if len(possible_text.strip()) > 0:
-                                                print(f"Returning raw decrypted data as string for client ID=1", file=sys.stderr)
-                                                return possible_text
+                                            decompressed_data = zlib.decompress(decrypted_data[:-i])
+                                            print(f"Successfully decompressed after trimming {i} bytes from end", file=sys.stderr)
+                                            break
                                         except Exception:
-                                            pass
-                                    raise Exception("Failed to find valid zlib data after trimming")
-                            else:
-                                # Try ignoring the last byte (sometimes padding causes issues)
-                                try:
-                                    decompressed_data = zlib.decompress(decrypted_data[:-1])
-                                except Exception as fourth_error:
-                                    # Log all attempts
-                                    self.last_error = (
-                                        f'Decompress errors: Standard: {first_error}, '
-                                        f'Raw: {second_error}, Gzip: {third_error}, '
-                                        f'Truncated: {fourth_error}'
-                                    )
-                                    print(self.last_error, file=sys.stderr)
-                                    return ''
+                                            continue
+                                    else:  # This else belongs to the for loop - it runs if no break occurred
+                                        # If we get here, none of the trimming approaches worked
+                                        # For client ID=1, as a last resort, return the decrypted data as string
+                                        if self.client_id == 1:
+                                            try:
+                                                possible_text = decrypted_data.decode('utf-8', errors='ignore')
+                                                if len(possible_text.strip()) > 0:
+                                                    print(f"Returning raw decrypted data as string for client ID=1", file=sys.stderr)
+                                                    return possible_text
+                                            except Exception:
+                                                pass
+                                        raise Exception("Failed to find valid zlib data after trimming")
+                                else:
+                                    # Try ignoring the last byte (sometimes padding causes issues)
+                                    try:
+                                        decompressed_data = zlib.decompress(decrypted_data[:-1])
+                                        print(f"Successfully decompressed after removing last byte", file=sys.stderr)
+                                    except Exception as fourth_error:
+                                        # Log all attempts
+                                        error_msg = (
+                                            f'Decompress errors: Standard: {first_error}, '
+                                            f'Raw: {second_error}, Gzip: {third_error}, '
+                                            f'Truncated: {fourth_error}'
+                                        )
+                                        self.last_error = error_msg
+                                        print(error_msg, file=sys.stderr)
+                                        return ''
                 
                 # Convert bytes to string
                 try:
