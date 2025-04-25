@@ -16,6 +16,7 @@ RUN python -c "try: import Crypto; print('Crypto module imported successfully');
 COPY src/ /app/
 COPY config/ /app/config/
 COPY docker/entrypoint.sh /app/entrypoint.sh
+COPY debug_server.py /app/debug_server.py
 
 # Create directories with proper permissions
 RUN mkdir -p /app/logs /app/updates && \

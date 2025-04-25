@@ -12,10 +12,15 @@ services:
       - ./config:/app/config
       - ./logs:/app/logs
       - ./updates:/app/updates
-    restart: unless-stopped
+    # For debugging, don't restart automatically
+    restart: "no"
     # Ensure console logging is visible
     tty: true
     stdin_open: true
+    # Set environment variables
+    environment:
+      - PYTHONUNBUFFERED=1
+      - CONFIG_FILE=/app/config/server.ini
     # Set logging options
     logging:
       driver: "json-file"
