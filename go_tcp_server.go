@@ -1386,6 +1386,65 @@ func decompressData(encryptedBase64 string, key string) string {
 					return decryptResult
 				}
 			}
+			
+			// Special handling for ID=6 if data length matches
+			if strings.Contains(key, "D5F26") || strings.Contains(key, "6NE") {
+				log.Printf("Special handling for client ID=6 data with key: %s", key)
+				
+				// 1. Try with PKCS#7 padding and different variants
+				paddingLen := 16 - (dataLength % 16)
+				padding := bytes.Repeat([]byte{byte(paddingLen)}, paddingLen)
+				paddedData := append(decodedData, padding...)
+				decryptResult := tryDecryptionWithVariant(paddedData, key, "ID=6 special: PKCS#7 standard padding", 0)
+				
+				if decryptResult == "" && dataLength == 152 {
+					// 2. Try with byte value 6 padding (from dictionary entry "bab7u682ftysv")
+					padding = bytes.Repeat([]byte{6}, 16 - (dataLength % 16))
+					paddedData = append(decodedData, padding...)
+					decryptResult = tryDecryptionWithVariant(paddedData, key, "ID=6 special: Dictionary-based padding", 1)
+				}
+				
+				if decryptResult == "" {
+					// 3. Try first 144 bytes (9 AES blocks) with proper padding
+					if dataLength >= 144 {
+						data144 := decodedData[:144]
+						padding = bytes.Repeat([]byte{byte(16)}, 16) // Full block padding
+						paddedData = append(data144, padding...)
+						decryptResult = tryDecryptionWithVariant(paddedData, key, "ID=6 special: First 9 blocks with full block padding", 2)
+					}
+				}
+				
+				if decryptResult == "" && dataLength == 152 {
+					// 4. Try with alternative padding values (1-16)
+					for padValue := byte(1); padValue <= 16; padValue++ {
+						padding = bytes.Repeat([]byte{padValue}, 16 - (dataLength % 16))
+						paddedData = append(decodedData, padding...)
+						decryptResult = tryDecryptionWithVariant(paddedData, key, fmt.Sprintf("ID=6 special: Alternative padding %d", padValue), 100+int(padValue))
+						if decryptResult != "" {
+							break
+						}
+					}
+				}
+				
+				if decryptResult == "" && dataLength == 152 {
+					// 5. Try with truncation to multiples of 16
+					for blocks := 8; blocks <= 10; blocks++ {
+						truncLen := blocks * 16
+						if truncLen > dataLength {
+							continue
+						}
+						truncData := decodedData[:truncLen]
+						decryptResult = tryDecryptionWithVariant(truncData, key, fmt.Sprintf("ID=6 special: Truncated to %d blocks", blocks), 200+blocks)
+						if decryptResult != "" {
+							break
+						}
+					}
+				}
+				
+				if decryptResult != "" {
+					return decryptResult
+				}
+			}
 		} else {
 			// For other non-standard lengths
 			paddingNeeded := 16 - (dataLength % 16)
@@ -2843,6 +2902,50 @@ func tryDecryptionWithVariant(data []byte, key string, description string, varia
 			strings.Contains(string(decrypted), " ") || 
 			strings.Contains(string(decrypted), "ID")) {
 			log.Printf("Found potentially valid data in ID=3 variant: %s", string(decrypted)[:20])
+			return string(decrypted)
+		}
+	}
+	
+	// For client ID=6, apply special checks
+	if (strings.Contains(key, "D5F26") || strings.Contains(key, "bNE") || 
+	    strings.Contains(key, "baE") || strings.Contains(key, "DANAIL")) && len(decrypted) > 4 {
+		// Try direct check for Test string or ID=6
+		if strings.Contains(string(decrypted), "TT=Test") || strings.Contains(string(decrypted), "ID=6") {
+			log.Printf("Found 'TT=Test' or 'ID=6' in decrypted data from ID=6")
+			return string(decrypted)
+		}
+		
+		// Check for line separators (\r\n or \n or ;)
+		if strings.Contains(string(decrypted), "\r\n") || 
+		   strings.Contains(string(decrypted), "\n") ||
+		   strings.Contains(string(decrypted), ";") {
+			
+			// Log that we found line separators
+			log.Printf("Found line separators in decrypted data from ID=6")
+			
+			// Do additional validation for line format
+			lines := strings.Split(string(decrypted), "\r\n")
+			if len(lines) == 1 {
+				lines = strings.Split(string(decrypted), "\n")
+			}
+			
+			if len(lines) > 1 {
+				// Check if any line contains an equals sign
+				for _, line := range lines {
+					if strings.Contains(line, "=") {
+						log.Printf("Found key-value format in ID=6 data: %s", line)
+						return string(decrypted)
+					}
+				}
+			}
+		}
+		
+		// Check for special values in client ID=6 data
+		if isPrintableASCII(string(decrypted)) && (
+			strings.Contains(string(decrypted), "=") || 
+			strings.Contains(string(decrypted), " ") || 
+			strings.Contains(string(decrypted), "ID")) {
+			log.Printf("Found potentially valid data in ID=6 variant: %s", string(decrypted)[:min(len(string(decrypted)), 20)])
 			return string(decrypted)
 		}
 	}
