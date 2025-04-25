@@ -125,7 +125,7 @@ services:
     restart: unless-stopped
     ports:
       - "8016:8016"  # TCP server port
-      - "8015:8015"  # HTTP server port
+      - "8080:8080"  # HTTP server port
     volumes:
       - ./config:/app/config
       - ./logs:/app/logs
