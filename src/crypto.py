@@ -114,14 +114,14 @@ class DataCompressor:
             decrypted_data = None
             if self.crypto_key:
                 try:
-                    # Special handling for client ID=2
-                    if self.client_id == 2:
-                        print(f"Special handling for client ID=2", file=sys.stderr)
+                    # Special handling for client ID=2 and ID=6
+                    if self.client_id in [2, 6]:
+                        print(f"Special handling for client ID={self.client_id}", file=sys.stderr)
                         
-                        # For ID=2, handle the 152-byte data packets
+                        # Handle the 152-byte data packets which are common for these clients
                         data_len = len(decoded_data)
                         if data_len == 152:
-                            print(f"Detected 152-byte data packet for client ID=2", file=sys.stderr)
+                            print(f"Detected 152-byte data packet for client ID={self.client_id}", file=sys.stderr)
                             
                             # Add PKCS#7 padding to make it valid for AES (multiple of 16)
                             # 152 + 8 = 160 bytes (divisible by 16)
@@ -146,6 +146,15 @@ class DataCompressor:
                         # For simplicity, just use the decoded data  
                         decrypted_data = decoded_data
                     else:
+                        # General handling for any client if the data length is not a multiple of 16
+                        data_len = len(decoded_data)
+                        if data_len % 16 != 0:
+                            print(f"General padding for data with length {data_len} which is not a multiple of 16", file=sys.stderr)
+                            padding_size = 16 - (data_len % 16)
+                            padded_data = decoded_data + bytes([padding_size]) * padding_size
+                            print(f"Added {padding_size} bytes of PKCS#7 padding", file=sys.stderr)
+                            decoded_data = padded_data
+                        
                         # Use MD5 hash of the crypto key as key
                         key = hashlib.md5(self.crypto_key.encode('utf-8')).digest()
                         
