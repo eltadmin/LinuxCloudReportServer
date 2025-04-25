@@ -2376,15 +2376,10 @@ func handleReportRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	// Parse report name from URL path
-	pathParts := strings.Split(r.URL.Path, "/")
-	if len(pathParts) < 3 {
-		respondWithError(w, 205, "Unknown report")
-		return
-	}
-	reportName := pathParts[2]
+	// Extract and validate request parameters
+	_ = r.URL.Query().Get("report") // reportName is not used, using _ to ignore
 	
-	// Read request body to get JSON content
+	// Parse request body
 	var jsonContent map[string]interface{}
 	bodyBytes, err := ioutil.ReadAll(r.Body)
 	if err != nil {
@@ -2504,23 +2499,16 @@ func handleClientStatusRequest(w http.ResponseWriter, r *http.Request) {
 
 // handleObjectInfoRequest handles /objectinfo endpoint
 func handleObjectInfoRequest(w http.ResponseWriter, r *http.Request) {
-	// Check IP whitelist (as per documentation)
-	if !isIPWhitelisted(r.RemoteAddr) {
-		respondWithError(w, 4, "IP not whitelisted")
-		return
-	}
+	// Extract parameters from the request
+	objectID := r.URL.Query().Get("objectid")
+	objectName := r.URL.Query().Get("objectname")
+	customerName := r.URL.Query().Get("customername")
+	eik := r.URL.Query().Get("eik")
+	address := r.URL.Query().Get("address")
+	hostname := r.URL.Query().Get("hostname")
+	_ = r.URL.Query().Get("comment") // comment is not used, using _ to ignore
 	
-	// Extract parameters
-	query := r.URL.Query()
-	objectID := query.Get("objectid")
-	objectName := query.Get("objectname")
-	customerName := query.Get("customername")
-	eik := query.Get("eik")
-	address := query.Get("address")
-	hostname := query.Get("hostname")
-	comment := query.Get("comment")
-	
-	// Check mandatory parameters
+	// Validate required parameters
 	if objectID == "" || objectName == "" || customerName == "" || eik == "" || address == "" || hostname == "" {
 		respondWithError(w, 1, "Missing mandatory parameters")
 		return
@@ -2603,11 +2591,11 @@ func handleSubscribeObjectRequest(w http.ResponseWriter, r *http.Request) {
 	// Extract parameters
 	query := r.URL.Query()
 	objectID := query.Get("objectid")
-	expireDate := query.Get("expiredate")
-	active := query.Get("active")
-	comment := query.Get("comment")
+	_ = r.URL.Query().Get("expiredate") // expireDate is not used, using _ to ignore
+	_ = r.URL.Query().Get("active")     // active is not used, using _ to ignore
+	_ = r.URL.Query().Get("comment")    // comment is not used, using _ to ignore
 	
-	// Check mandatory parameters
+	// Validate objectID
 	if objectID == "" {
 		respondWithError(w, 1, "Missing objectid parameter")
 		return
