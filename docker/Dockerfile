@@ -11,6 +11,10 @@ COPY docker/check_crypto.py /app/check_crypto.py
 RUN chmod +x /app/check_crypto.py && \
     python /app/check_crypto.py
 
+# Copy configuration setup script
+COPY docker/setup_config.py /app/setup_config.py
+RUN chmod +x /app/setup_config.py
+
 # Copy application code
 COPY src/ /app/
 COPY config/ /app/config/

@@ -56,6 +56,16 @@ if [ ! -f "/app/config/keys.json" ]; then
     echo "Empty keys.json created - you will need to generate encryption keys"
 fi
 
+# Run our configuration setup script
+echo -e "${GREEN}Running configuration setup...${NC}"
+python /app/setup_config.py
+SETUP_RESULT=$?
+
+if [ $SETUP_RESULT -ne 0 ]; then
+    echo -e "${RED}Configuration setup failed! Check logs for details.${NC}"
+    exit 1
+fi
+
 # Run diagnostics script
 echo -e "${GREEN}Running system diagnostics...${NC}"
 python /app/debug_server.py
