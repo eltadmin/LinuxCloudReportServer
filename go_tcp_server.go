@@ -541,6 +541,14 @@ func (s *TCPServer) handleInit(conn *TCPConnection, parts []string) (string, err
 	} else {
 		// Normal key generation for other clients
 		keyPart := ""
+		
+		// Parse clientID to int
+		clientIDInt, err := strconv.Atoi(conn.clientID)
+		if err != nil {
+			log.Printf("Warning: client ID %s is not a valid integer: %v", conn.clientID, err)
+			clientIDInt = 0
+		}
+		
 		if len(CRYPTO_DICTIONARY) >= clientIDInt && clientIDInt > 0 {
 			// Extract part from the dictionary based on key length
 			if int(conn.keyLength) <= len(CRYPTO_DICTIONARY[clientIDInt-1]) {
