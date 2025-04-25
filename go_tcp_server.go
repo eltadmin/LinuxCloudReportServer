@@ -2951,9 +2951,11 @@ func tryDecryptionWithVariant(data []byte, key string, description string, varia
 	}
 	
 	// Try to remove padding
-	padLen := int(decrypted[len(decrypted)-1])
-	if padLen > 0 && padLen <= aes.BlockSize {
-		decrypted = decrypted[:len(decrypted)-padLen]
+	if len(decrypted) > 0 {
+		padLen := int(decrypted[len(decrypted)-1])
+		if padLen > 0 && padLen <= aes.BlockSize && padLen <= len(decrypted) {
+			decrypted = decrypted[:len(decrypted)-padLen]
+		}
 	}
 	
 	// Try to decompress if it looks like valid zlib data
@@ -2978,4 +2980,20 @@ func tryDecryptionWithVariant(data []byte, key string, description string, varia
 	
 	log.Printf("Variant %d failed to produce valid output", variant)
 	return ""
-} 
+}
+
+// Helper function to limit string length for logging
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// Helper function to limit string length for logging
+func safeLogString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}

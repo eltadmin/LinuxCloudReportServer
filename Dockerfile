@@ -1,44 +1,54 @@
 FROM golang:1.20-alpine AS builder
 
-WORKDIR /app
+# Install necessary build tools
+RUN apk add --no-cache git gcc musl-dev 
 
-# Install necessary packages
-RUN apk add --no-cache git gcc musl-dev
+# Set working directory
+WORKDIR /build
 
-# Copy source code
+# Copy only the go.mod and go.sum files first to leverage Docker layer caching
+COPY go.mod go.sum* ./
+RUN go mod download || true
+
+# Copy the source code
 COPY . .
 
-# Build directly without trying to resolve external dependencies
+# Build the application
 RUN go build -mod=mod -o reportcom-server ./go_tcp_server.go
 
-# Create a minimal production image
+# Create the production image
 FROM alpine:3.17
+
+# Install runtime dependencies
+RUN apk add --no-cache ca-certificates tzdata
+
+# Set up directories
+RUN mkdir -p /app/logs /app/updates /app/config /app/keys
+
+# Copy the binary from the builder stage
+COPY --from=builder /build/reportcom-server /app/
+
+# Copy config files
+COPY config.ini /app/config/
+
+# Create a non-root user to run the application
+RUN addgroup -S reportcom && adduser -S reportcom -G reportcom
+RUN chown -R reportcom:reportcom /app
 
 # Set working directory
 WORKDIR /app
 
-# Install CA certificates and timezone data
-RUN apk --no-cache add ca-certificates tzdata
-
-# Create required directories
-RUN mkdir -p /app/config /app/logs /app/updates /app/keys
-
-# Copy the binary from builder stage
-COPY --from=builder /app/reportcom-server /app/
-
-# Copy config.ini to config directory
-COPY config.ini /app/config/
-
-# Set permissions
-RUN chmod +x /app/reportcom-server
+# Use the non-root user
+USER reportcom
 
 # Expose TCP and HTTP ports
-EXPOSE 8016 8080
+EXPOSE 8016/tcp
+EXPOSE 8080/tcp
 
-# Set environment variables for ports
-ENV TCP_PORT=8016
-ENV HTTP_PORT=8080
-ENV TCP_HOST=0.0.0.0
+# Define default environment variables
+ENV TCP_PORT=8016 \
+    HTTP_PORT=8080 \
+    TCP_HOST=0.0.0.0
 
-# Run the server
+# Run the application
 CMD ["/app/reportcom-server", "-config", "/app/config/config.ini"] 
