@@ -17,33 +17,33 @@ goto help
 
 :build
 echo Изграждане на Docker образ...
-docker-compose build reportcom-server
+docker-compose -f reportcom-compose.yml build
 goto end
 
 :up
 echo Стартиране на контейнера...
-docker-compose up -d reportcom-server
+docker-compose -f reportcom-compose.yml up -d
 echo Контейнерът е стартиран. Използвайте '%0 logs' за да видите логовете.
 goto end
 
 :down
 echo Спиране на контейнера...
-docker-compose down reportcom-server
+docker-compose -f reportcom-compose.yml down
 goto end
 
 :logs
 echo Показване на логове...
-docker-compose logs -f reportcom-server
+docker-compose -f reportcom-compose.yml logs -f
 goto end
 
 :rebuild
 echo Повторно изграждане без кеш...
-docker-compose build --no-cache reportcom-server
+docker-compose -f reportcom-compose.yml build --no-cache
 goto end
 
 :status
 echo Проверка на статуса...
-docker-compose ps reportcom-server
+docker-compose -f reportcom-compose.yml ps
 goto end
 
 :help

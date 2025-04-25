@@ -21,7 +21,7 @@ WORKDIR /app
 RUN apk --no-cache add ca-certificates tzdata
 
 # Create required directories
-RUN mkdir -p /app/config /app/logs /app/updates
+RUN mkdir -p /app/config /app/logs /app/updates /app/keys
 
 # Copy the binary from builder stage
 COPY --from=builder /app/reportcom-server /app/
@@ -34,6 +34,11 @@ RUN chmod +x /app/reportcom-server
 
 # Expose TCP and HTTP ports
 EXPOSE 8016 8080
+
+# Set environment variables for ports
+ENV TCP_PORT=8016
+ENV HTTP_PORT=8080
+ENV TCP_HOST=0.0.0.0
 
 # Run the server
 CMD ["/app/reportcom-server", "-config", "/app/config/config.ini"] 

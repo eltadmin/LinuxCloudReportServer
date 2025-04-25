@@ -27,34 +27,34 @@ function show_help {
 }
 
 # Създаваме необходимите директории ако не съществуват
-mkdir -p config logs updates
+mkdir -p config logs updates keys
 
 # Обработка на командите
 case "$1" in
   build)
     echo -e "${YELLOW}Изграждане на Docker образ...${NC}"
-    docker-compose build reportcom-server
+    docker-compose -f reportcom-compose.yml build
     ;;
   up)
     echo -e "${YELLOW}Стартиране на контейнера...${NC}"
-    docker-compose up -d reportcom-server
+    docker-compose -f reportcom-compose.yml up -d
     echo -e "${GREEN}Контейнерът е стартиран. Използвайте '$0 logs' за да видите логовете.${NC}"
     ;;
   down|stop)
     echo -e "${YELLOW}Спиране на контейнера...${NC}"
-    docker-compose down reportcom-server
+    docker-compose -f reportcom-compose.yml down
     ;;
   logs)
     echo -e "${YELLOW}Показване на логове...${NC}"
-    docker-compose logs -f reportcom-server
+    docker-compose -f reportcom-compose.yml logs -f
     ;;
   rebuild)
     echo -e "${YELLOW}Повторно изграждане без кеш...${NC}"
-    docker-compose build --no-cache reportcom-server
+    docker-compose -f reportcom-compose.yml build --no-cache
     ;;
   status)
     echo -e "${YELLOW}Проверка на статуса...${NC}"
-    docker-compose ps reportcom-server
+    docker-compose -f reportcom-compose.yml ps
     ;;
   help|*)
     show_help

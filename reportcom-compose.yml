@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  reportcom-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: reportcom-server:latest
+    container_name: reportcom-server
+    restart: unless-stopped
+    ports:
+      - "8016:8016"  # TCP server port
+      - "8080:8080"  # HTTP server port
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./updates:/app/updates
+      - ./keys:/app/keys
+    environment:
+      - TZ=Europe/Sofia
+      - TCP_PORT=8016
+      - HTTP_PORT=8080
+      - TCP_HOST=0.0.0.0
+    networks:
+      - reportcom-network
+
+networks:
+  reportcom-network:
+    driver: bridge 
