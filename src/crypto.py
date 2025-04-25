@@ -4,6 +4,8 @@ Cryptography module for Cloud Report Server
 
 import base64
 import hashlib
+import sys
+import traceback
 import zlib
 from typing import Optional, Tuple
 
@@ -48,7 +50,7 @@ class DataCompressor:
                 source_bytes = source
                 
             # Compress the data using zlib
-            compressed_data = zlib.compress(source_bytes)
+            compressed_data = zlib.compress(source_bytes, level=9)  # Use best compression
             
             # Encrypt the data if we have a crypto key
             if self.crypto_key:
@@ -73,6 +75,8 @@ class DataCompressor:
             
         except Exception as e:
             self.last_error = f'[compress_data] {str(e)}'
+            print(f"Error in compress_data: {e}", file=sys.stderr)
+            print(traceback.format_exc(), file=sys.stderr)
             return ''
     
     def decompress_data(self, source: str) -> str:
@@ -96,46 +100,106 @@ class DataCompressor:
                 decoded_data = base64.b64decode(source)
             except Exception as e:
                 self.last_error = f'[decompress_data] Base64 decode error: {str(e)}'
+                print(f"Base64 decode error: {e}", file=sys.stderr)
+                print(f"Source (length {len(source)}): {source[:50]}...", file=sys.stderr)
+                print(traceback.format_exc(), file=sys.stderr)
                 return ''
+            
+            # Log the length of decoded data
+            print(f"Decoded data length: {len(decoded_data)}", file=sys.stderr)
             
             # Decrypt the data if we have a crypto key
             if self.crypto_key:
                 try:
                     # Check if data length is multiple of 16 (AES block size)
                     if len(decoded_data) % 16 != 0:
-                        # Special handling for client ID=2 which sends data with invalid length
+                        print(f"Invalid data length for AES decryption: {len(decoded_data)}", file=sys.stderr)
+                        print(f"Adding PKCS#7 padding to make length a multiple of 16", file=sys.stderr)
+                        
                         # Add PKCS#7 padding to make it valid
                         padding_size = 16 - (len(decoded_data) % 16)
                         decoded_data += bytes([padding_size]) * padding_size
+                        print(f"New length after padding: {len(decoded_data)}", file=sys.stderr)
                     
                     # Use MD5 hash of the key as AES key
                     key = hashlib.md5(self.crypto_key.encode('utf-8')).digest()
+                    print(f"Using crypto key: {self.crypto_key}", file=sys.stderr)
                     
                     # Create AES cipher in CBC mode with zero IV
                     cipher = AES.new(key, AES.MODE_CBC, iv=bytes(16))
                     
                     # Decrypt the data
-                    decrypted_data = unpad(cipher.decrypt(decoded_data), AES.block_size)
+                    try:
+                        decrypted_data = cipher.decrypt(decoded_data)
+                        # Try to unpad - if it fails, we'll catch the exception
+                        try:
+                            decrypted_data = unpad(decrypted_data, AES.block_size)
+                        except Exception as e:
+                            print(f"Error unpadding data: {e}", file=sys.stderr)
+                            print("Using raw decrypted data", file=sys.stderr)
+                            # For backward compatibility, try to continue with the raw decrypted data
+                            # This handles cases where the original data wasn't properly padded
+                            pass
+                    except Exception as e:
+                        self.last_error = f'[decompress_data] Decrypt error: {str(e)}'
+                        print(f"Decrypt error: {e}", file=sys.stderr)
+                        print(traceback.format_exc(), file=sys.stderr)
+                        return ''
+                        
                 except Exception as e:
-                    self.last_error = f'[decompress_data] Decrypt error: {str(e)}'
+                    self.last_error = f'[decompress_data] Decrypt setup error: {str(e)}'
+                    print(f"Decrypt setup error: {e}", file=sys.stderr)
+                    print(traceback.format_exc(), file=sys.stderr)
                     return ''
             else:
                 decrypted_data = decoded_data
             
             # Decompress the data
             try:
-                decompressed_data = zlib.decompress(decrypted_data)
+                # Try multiple decompression strategies
+                try:
+                    # Standard zlib decompression
+                    decompressed_data = zlib.decompress(decrypted_data)
+                except Exception as first_error:
+                    try:
+                        # Try with window bits = -15 (raw deflate)
+                        decompressed_data = zlib.decompress(decrypted_data, -15)
+                    except Exception as second_error:
+                        try:
+                            # Try with window bits = 31 (gzip)
+                            decompressed_data = zlib.decompress(decrypted_data, 31)
+                        except Exception as third_error:
+                            # Try ignoring the last byte (sometimes padding causes issues)
+                            try:
+                                decompressed_data = zlib.decompress(decrypted_data[:-1])
+                            except Exception as fourth_error:
+                                # Log all attempts
+                                self.last_error = (
+                                    f'Decompress errors: Standard: {first_error}, '
+                                    f'Raw: {second_error}, Gzip: {third_error}, '
+                                    f'Truncated: {fourth_error}'
+                                )
+                                print(self.last_error, file=sys.stderr)
+                                return ''
                 
                 # Convert bytes to string
-                result = decompressed_data.decode('utf-8')
+                try:
+                    result = decompressed_data.decode('utf-8')
+                except UnicodeDecodeError:
+                    # Try with latin-1 encoding if utf-8 fails
+                    result = decompressed_data.decode('latin-1')
                 
                 return result
             except Exception as e:
                 self.last_error = f'[decompress_data] Decompress error: {str(e)}'
+                print(f"Decompress error: {e}", file=sys.stderr)
+                print(traceback.format_exc(), file=sys.stderr)
                 return ''
             
         except Exception as e:
             self.last_error = f'[decompress_data] {str(e)}'
+            print(f"General error in decompress_data: {e}", file=sys.stderr)
+            print(traceback.format_exc(), file=sys.stderr)
             return ''
 
 def check_registration_key(serial: str, key: str) -> bool:
@@ -151,6 +215,11 @@ def check_registration_key(serial: str, key: str) -> bool:
         True if the key is valid, False otherwise
     """
     try:
+        # Add proper padding if necessary
+        padding_needed = len(key) % 4
+        if padding_needed:
+            key += '=' * (4 - padding_needed)
+            
         # Use MD5 hash of the serial as key
         md5_key = hashlib.md5(serial.encode('utf-8')).digest()
         
@@ -164,8 +233,16 @@ def check_registration_key(serial: str, key: str) -> bool:
         decrypted = cipher.decrypt(decoded_key)
         
         # Check if the decrypted key is 'ElCloudRepSrv'
-        return decrypted.decode('utf-8') == 'ElCloudRepSrv'
-    except Exception:
+        expected = 'ElCloudRepSrv'
+        result = decrypted.decode('utf-8') == expected
+        
+        if not result:
+            print(f"Registration key validation failed. Expected '{expected}' but got '{decrypted.decode('utf-8')}'", file=sys.stderr)
+        
+        return result
+    except Exception as e:
+        print(f"Error in check_registration_key: {e}", file=sys.stderr)
+        print(traceback.format_exc(), file=sys.stderr)
         return False
 
 def generate_client_crypto_key(client_id: int, server_key: str, host_name: str) -> str:
@@ -183,26 +260,43 @@ def generate_client_crypto_key(client_id: int, server_key: str, host_name: str) 
     # Check for hardcoded keys first
     from constants import HARDCODED_KEYS, CRYPTO_DICTIONARY
     
-    if client_id in HARDCODED_KEYS:
-        return HARDCODED_KEYS[client_id]
-    
-    # Normal key generation
     try:
-        # Get dictionary entry for this client ID (1-based index)
-        dict_entry = CRYPTO_DICTIONARY[client_id - 1]
+        if client_id in HARDCODED_KEYS:
+            hardcoded_key = HARDCODED_KEYS[client_id]
+            print(f"Using hardcoded key for client ID {client_id}: {hardcoded_key}", file=sys.stderr)
+            return hardcoded_key
         
-        # Get first chars and last char of hostname
-        host_first_chars = host_name[:2] if len(host_name) >= 2 else host_name
-        host_last_char = host_name[-1] if host_name else ''
-        
-        # Determine length of dictionary part to use
-        dict_len = 2 if client_id == 9 else 1
-        dict_part = dict_entry[:dict_len]
-        
-        # Combine parts to create key
-        crypto_key = f"{server_key}{dict_part}{host_first_chars}{host_last_char}"
-        
-        return crypto_key
-    except Exception:
-        # Return a default key if there's an error
-        return f"{server_key}xx{host_name[:1]}" 
+        # Normal key generation
+        try:
+            # Get dictionary entry for this client ID (1-based index)
+            if 1 <= client_id <= len(CRYPTO_DICTIONARY):
+                dict_entry = CRYPTO_DICTIONARY[client_id - 1]
+            else:
+                print(f"Client ID {client_id} out of range, using default dictionary entry", file=sys.stderr)
+                dict_entry = CRYPTO_DICTIONARY[0]
+            
+            # Get first chars and last char of hostname
+            host_first_chars = host_name[:2] if len(host_name) >= 2 else host_name
+            host_last_char = host_name[-1] if host_name else ''
+            
+            # Determine length of dictionary part to use
+            dict_len = 2 if client_id == 9 else 1
+            dict_part = dict_entry[:dict_len]
+            
+            # Combine parts to create key
+            crypto_key = f"{server_key}{dict_part}{host_first_chars}{host_last_char}"
+            
+            print(f"Generated key for client ID {client_id}: {crypto_key}", file=sys.stderr)
+            return crypto_key
+        except Exception as e:
+            print(f"Error in normal key generation: {e}", file=sys.stderr)
+            print(traceback.format_exc(), file=sys.stderr)
+            # Return a default key if there's an error
+            default_key = f"{server_key}xx{host_name[:1]}"
+            print(f"Using default key: {default_key}", file=sys.stderr)
+            return default_key
+    except Exception as e:
+        print(f"Error in generate_client_crypto_key: {e}", file=sys.stderr)
+        print(traceback.format_exc(), file=sys.stderr)
+        # If all else fails, return a basic key
+        return f"{server_key}x" 

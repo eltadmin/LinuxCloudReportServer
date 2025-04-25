@@ -4,7 +4,9 @@ Logger module for Cloud Report Server
 
 import datetime
 import os
+import sys
 import threading
+import traceback
 from typing import List, Optional
 
 class Logger:
@@ -22,8 +24,22 @@ class Logger:
         self.log_filename = log_filename or "CloudReportLog.txt"
         self.lock = threading.Lock()
         
-        # Create log directory if it doesn't exist
-        os.makedirs(log_path, exist_ok=True)
+        try:
+            # Create log directory if it doesn't exist
+            if not os.path.exists(log_path):
+                os.makedirs(log_path, exist_ok=True)
+                print(f"Created log directory: {log_path}", file=sys.stdout)
+                
+            # Test write access by writing a small test file
+            test_file = os.path.join(log_path, ".test_write_access")
+            with open(test_file, "w") as f:
+                f.write("test")
+            os.remove(test_file)
+        except Exception as e:
+            print(f"Error initializing logger: {e}", file=sys.stderr)
+            print(f"Log path: {log_path}", file=sys.stderr)
+            print(traceback.format_exc(), file=sys.stderr)
+            # Don't raise the exception, continue with warnings
     
     def log(self, message: str, include_timestamp: bool = True) -> None:
         """
@@ -48,13 +64,20 @@ class Logger:
                 if include_timestamp:
                     timestamp = f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} "
                 
+                # Ensure log directory exists
+                os.makedirs(self.log_path, exist_ok=True)
+                
                 # Write to log file
                 with open(log_file_path, "a", encoding="utf-8") as f:
                     f.write(f"{timestamp}{message}\n")
             
             except Exception as e:
-                # If we can't log, just print to stderr
-                print(f"Error writing to log: {e}", flush=True)
+                # If we can't log, print to stderr
+                print(f"Error writing to log: {e}", file=sys.stderr)
+                print(f"Message: {message}", file=sys.stderr)
+                print(f"Log path: {self.log_path}", file=sys.stderr)
+                print(f"Log file: {self.log_filename}", file=sys.stderr)
+                print(traceback.format_exc(), file=sys.stderr)
     
     def _rotate_log_file(self, log_file_path: str) -> None:
         """
@@ -78,7 +101,8 @@ class Logger:
             
         except Exception as e:
             # If rotation fails, just continue
-            print(f"Error rotating log file: {e}", flush=True)
+            print(f"Error rotating log file: {e}", file=sys.stderr)
+            print(traceback.format_exc(), file=sys.stderr)
     
     def _cleanup_old_logs(self) -> None:
         """Clean up old log files (older than 30 days)"""
@@ -103,7 +127,8 @@ class Logger:
         
         except Exception as e:
             # If cleanup fails, just continue
-            print(f"Error cleaning up old logs: {e}", flush=True)
+            print(f"Error cleaning up old logs: {e}", file=sys.stderr)
+            print(traceback.format_exc(), file=sys.stderr)
     
     def log_trace(self, method_name: str, messages: List[str]) -> None:
         """
@@ -133,4 +158,5 @@ class Logger:
             
             except Exception as e:
                 # If trace logging fails, just print to stderr
-                print(f"Error writing to trace log: {e}", flush=True) 
+                print(f"Error writing to trace log: {e}", file=sys.stderr)
+                print(traceback.format_exc(), file=sys.stderr) 

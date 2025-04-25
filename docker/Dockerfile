@@ -10,8 +10,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ /app/
 COPY config/ /app/config/
 
-# Create directories
-RUN mkdir -p /app/logs /app/updates
+# Create directories with proper permissions
+RUN mkdir -p /app/logs /app/updates && \
+    chmod 777 /app/logs /app/updates
 
 # Expose ports
 EXPOSE 8016

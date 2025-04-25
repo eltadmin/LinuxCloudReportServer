@@ -8,6 +8,7 @@ import os
 import signal
 import sys
 import time
+import traceback
 from typing import Dict, List, Optional, Any
 
 from config import ServerConfig
@@ -26,70 +27,86 @@ class CloudReportServer:
         Args:
             config_file: Path to the configuration file
         """
-        # Create logs directory
-        self.logs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
-        os.makedirs(self.logs_dir, exist_ok=True)
-        
-        # Initialize logger
-        self.logger = Logger(self.logs_dir)
-        self.logger.log("Cloud Report Server starting...")
-        
-        # Load configuration
         try:
-            self.config = ServerConfig(config_file)
-            self.logger.log(f"Configuration loaded from {config_file}")
-        except Exception as e:
-            self.logger.log(f"Failed to load configuration: {e}")
-            sys.exit(1)
-        
-        # Check registration
-        reg_info = self.config.get_registration_info()
-        serial = reg_info["serial_number"]
-        key = reg_info["key"]
-        
-        if not check_registration_key(serial, key):
-            self.logger.log("Invalid registration key! Exiting.")
-            sys.exit(1)
-        
-        self.logger.log("Registration key validated successfully")
-        
-        # Initialize server interfaces
-        self.tcp_servers = []
-        self.http_servers = []
-        
-        # Get number of server interfaces
-        server_count = self.config.get_server_count()
-        
-        for i in range(1, server_count + 1):
+            # Create logs directory
+            self.logs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
+            os.makedirs(self.logs_dir, exist_ok=True)
+            
+            # Initialize logger
+            self.logger = Logger(self.logs_dir)
+            self.logger.log("Cloud Report Server starting...")
+            
+            # Load configuration
             try:
-                # Get server settings
-                settings = self.config.get_server_settings(i)
-                
-                # Create TCP server
-                tcp_server = TcpServer(
-                    host=settings["tcp_interface"],
-                    port=settings["tcp_port"],
-                    log_path=self.logs_dir,
-                    auth_server_url=settings["auth_server_url"]
-                )
-                
-                # Create HTTP server
-                http_server = HttpServer(
-                    host=settings["http_interface"],
-                    port=settings["http_port"],
-                    log_path=self.logs_dir,
-                    logins=settings["http_logins"],
-                    get_client_func=tcp_server.get_client,
-                    get_client_list_func=tcp_server.get_client_list
-                )
-                
-                self.tcp_servers.append(tcp_server)
-                self.http_servers.append(http_server)
-                
-                self.logger.log(f"Server interface {i} initialized")
-                
+                self.config = ServerConfig(config_file)
+                self.logger.log(f"Configuration loaded from {config_file}")
             except Exception as e:
-                self.logger.log(f"Failed to initialize server interface {i}: {e}")
+                self.logger.log(f"Failed to load configuration: {e}")
+                sys.exit(1)
+            
+            # Check registration
+            try:
+                reg_info = self.config.get_registration_info()
+                serial = reg_info["serial_number"]
+                key = reg_info["key"]
+                
+                if not check_registration_key(serial, key):
+                    self.logger.log("Invalid registration key! Exiting.")
+                    sys.exit(1)
+                
+                self.logger.log("Registration key validated successfully")
+            except Exception as e:
+                self.logger.log(f"Error validating registration key: {e}")
+                sys.exit(1)
+            
+            # Initialize server interfaces
+            self.tcp_servers = []
+            self.http_servers = []
+            
+            # Get number of server interfaces
+            server_count = self.config.get_server_count()
+            
+            for i in range(1, server_count + 1):
+                try:
+                    # Get server settings
+                    settings = self.config.get_server_settings(i)
+                    
+                    # Create TCP server
+                    tcp_server = TcpServer(
+                        host=settings["tcp_interface"],
+                        port=settings["tcp_port"],
+                        log_path=self.logs_dir,
+                        auth_server_url=settings["auth_server_url"]
+                    )
+                    
+                    # Create HTTP server
+                    http_server = HttpServer(
+                        host=settings["http_interface"],
+                        port=settings["http_port"],
+                        log_path=self.logs_dir,
+                        logins=settings["http_logins"],
+                        get_client_func=tcp_server.get_client,
+                        get_client_list_func=tcp_server.get_client_list
+                    )
+                    
+                    self.tcp_servers.append(tcp_server)
+                    self.http_servers.append(http_server)
+                    
+                    self.logger.log(f"Server interface {i} initialized")
+                    
+                except Exception as e:
+                    self.logger.log(f"Failed to initialize server interface {i}: {e}")
+                    self.logger.log(traceback.format_exc())
+                    sys.exit(1)
+        except Exception as e:
+            # If logger is not initialized yet, print to stderr
+            if hasattr(self, 'logger'):
+                self.logger.log(f"Fatal error during initialization: {e}")
+                self.logger.log(traceback.format_exc())
+            else:
+                print(f"Fatal error during initialization: {e}", file=sys.stderr)
+                print(traceback.format_exc(), file=sys.stderr)
+            sys.exit(1)
     
     def start(self):
         """Start all server interfaces"""
@@ -101,6 +118,9 @@ class CloudReportServer:
                     self.logger.log(f"TCP server {i+1} started")
                 except Exception as e:
                     self.logger.log(f"Failed to start TCP server {i+1}: {e}")
+                    self.logger.log(traceback.format_exc())
+                    self.stop()
+                    sys.exit(1)
             
             # Start HTTP servers
             for i, server in enumerate(self.http_servers):
@@ -109,6 +129,9 @@ class CloudReportServer:
                     self.logger.log(f"HTTP server {i+1} started")
                 except Exception as e:
                     self.logger.log(f"Failed to start HTTP server {i+1}: {e}")
+                    self.logger.log(traceback.format_exc())
+                    self.stop()
+                    sys.exit(1)
             
             self.logger.log("Cloud Report Server started")
             
@@ -122,7 +145,9 @@ class CloudReportServer:
                 
         except Exception as e:
             self.logger.log(f"Error in main server loop: {e}")
+            self.logger.log(traceback.format_exc())
             self.stop()
+            sys.exit(1)
     
     def stop(self, *args):
         """Stop all server interfaces"""
@@ -155,5 +180,10 @@ if __name__ == "__main__":
     )
     
     # Create and start server
-    server = CloudReportServer(config_file)
-    server.start() 
+    try:
+        server = CloudReportServer(config_file)
+        server.start()
+    except Exception as e:
+        print(f"Fatal error: {e}", file=sys.stderr)
+        print(traceback.format_exc(), file=sys.stderr)
+        sys.exit(1) 
