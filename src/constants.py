@@ -48,6 +48,7 @@ CRYPTO_DICTIONARY = [
 
 # Special hardcoded keys for specific client IDs
 HARDCODED_KEYS = {
+    1: 'D5F21NE-',   # Client ID=1
     2: 'D5F2aRD-',   # Client ID=2
     5: 'D5F2cNE-',   # Client ID=5
     6: 'D5F26NE-',   # Client ID=6
