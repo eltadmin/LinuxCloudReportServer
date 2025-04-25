@@ -6,15 +6,14 @@ RUN apk add --no-cache git gcc musl-dev
 # Set working directory
 WORKDIR /build
 
-# Copy only the go.mod and go.sum files first to leverage Docker layer caching
-COPY go.mod go.sum* ./
-RUN go mod download || true
+# Create go.mod file if it doesn't exist
+RUN touch go.mod && echo "module github.com/eltrade/reportcom" > go.mod && echo "" >> go.mod && echo "go 1.20" >> go.mod
 
 # Copy the source code
-COPY . .
+COPY go_tcp_server.go ./
 
 # Build the application
-RUN go build -mod=mod -o reportcom-server ./go_tcp_server.go
+RUN go build -o reportcom-server ./go_tcp_server.go
 
 # Create the production image
 FROM alpine:3.17
@@ -38,6 +37,13 @@ RUN chown -R reportcom:reportcom /app
 # Set working directory
 WORKDIR /app
 
+# Set permissions
+RUN chmod 755 /app/reportcom-server
+RUN chmod -R 755 /app/config
+RUN chmod -R 755 /app/logs
+RUN chmod -R 755 /app/updates
+RUN chmod -R 755 /app/keys
+
 # Use the non-root user
 USER reportcom
 
@@ -48,7 +54,8 @@ EXPOSE 8080/tcp
 # Define default environment variables
 ENV TCP_PORT=8016 \
     HTTP_PORT=8080 \
-    TCP_HOST=0.0.0.0
+    TCP_HOST=0.0.0.0 \
+    TZ=Europe/Sofia
 
 # Run the application
-CMD ["/app/reportcom-server", "-config", "/app/config/config.ini"] 
+CMD ["/app/reportcom-server"] 
