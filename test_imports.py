@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     print("Testing imports...")
-    from src.constants import (
+    from constants import (
         TCP_ERR_INVALID_CRYPTO_KEY,
         TCP_ERR_INVALID_DATA_PACKET,
         TCP_ERR_FAIL_DECODE_DATA,
@@ -21,7 +21,7 @@ try:
     )
     print("Constants import successful!")
     
-    from src.connection import TCPCommandHandler
+    from connection import TCPCommandHandler
     print("TCPCommandHandler import successful!")
     
     # Test the error codes

@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Tuple, Any
 import requests
 import sys
 
-from src.constants import (
+from constants import (
     DROP_DEVICE_WITHOUT_ACTIVITY_SEC,
     HARDCODED_KEYS,
     ID8_KEY,
@@ -27,8 +27,8 @@ from src.constants import (
     TCP_ERR_FAIL_INIT_CLIENT_ID,
     TCP_ERR_CHECK_UPDATE_ERROR,
 )
-from src.crypto import DataCompressor, generate_client_crypto_key
-from src.logger import Logger
+from crypto import DataCompressor, generate_client_crypto_key
+from logger import Logger
 
 class ConnectionInfo:
     """Connection information class"""
