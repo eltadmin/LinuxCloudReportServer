@@ -179,7 +179,6 @@ class Environment implements \ArrayAccess, \IteratorAggregate
     /**
      * Array Access: Offset Exists
      */
-    #[\ReturnTypeWillChange]
     public function offsetExists($offset)
     {
         return isset($this->properties[$offset]);
@@ -188,7 +187,6 @@ class Environment implements \ArrayAccess, \IteratorAggregate
     /**
      * Array Access: Offset Get
      */
-    #[\ReturnTypeWillChange]
     public function offsetGet($offset)
     {
         if (isset($this->properties[$offset])) {
@@ -201,7 +199,6 @@ class Environment implements \ArrayAccess, \IteratorAggregate
     /**
      * Array Access: Offset Set
      */
-    #[\ReturnTypeWillChange]
     public function offsetSet($offset, $value)
     {
         $this->properties[$offset] = $value;
@@ -210,7 +207,6 @@ class Environment implements \ArrayAccess, \IteratorAggregate
     /**
      * Array Access: Offset Unset
      */
-    #[\ReturnTypeWillChange]
     public function offsetUnset($offset)
     {
         unset($this->properties[$offset]);
@@ -221,7 +217,6 @@ class Environment implements \ArrayAccess, \IteratorAggregate
      *
      * @return \ArrayIterator
      */
-    #[\ReturnTypeWillChange]
     public function getIterator()
     {
         return new \ArrayIterator($this->properties);

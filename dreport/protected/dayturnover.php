@@ -35,9 +35,9 @@
   
 </style>
 
-<?php
-require_once 'init.php';
+ 
 
+<?php
     session_start();
 	date_default_timezone_set('Europe/Sofia');
     if(!isset($_SESSION['s_authenticated']) || empty($_SESSION['s_authenticated'])){

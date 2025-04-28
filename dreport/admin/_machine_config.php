@@ -16,10 +16,10 @@ require_once("verysimple/HTTP/RequestUtil.php");
 
 /** database connection settings */
 GlobalConfig::$CONNECTION_SETTING = new ConnectionSetting();
-GlobalConfig::$CONNECTION_SETTING->ConnectionString = getenv('DB_HOST') ?: 'localhost';
-GlobalConfig::$CONNECTION_SETTING->DBName = getenv('DB_NAME') ?: 'dreports';
-GlobalConfig::$CONNECTION_SETTING->Username = getenv('DB_USER') ?: 'dreports';
-GlobalConfig::$CONNECTION_SETTING->Password = getenv('DB_PASSWORD') ?: 'dreports';
+GlobalConfig::$CONNECTION_SETTING->ConnectionString = "localhost:3306";
+GlobalConfig::$CONNECTION_SETTING->DBName = "dreports";
+GlobalConfig::$CONNECTION_SETTING->Username = "dreports";
+GlobalConfig::$CONNECTION_SETTING->Password = "ftUk58_HoRs3sAzz8jk";
 GlobalConfig::$CONNECTION_SETTING->Type = "MySQLi";
 GlobalConfig::$CONNECTION_SETTING->Charset = "utf8";
 GlobalConfig::$CONNECTION_SETTING->Multibyte = true;
